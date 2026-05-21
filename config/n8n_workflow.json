@@ -1,0 +1,88 @@
+{
+  "name": "ZEUS Trading Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 15 }]
+        }
+      },
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8080/run",
+        "requestMethod": "POST",
+        "responseFormat": "json"
+      },
+      "name": "Trigger ZEUS Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json[\"count\"] }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "Trades Executed?",
+      "type": "n8n-nodes-base.if",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8080/status",
+        "requestMethod": "GET",
+        "responseFormat": "json"
+      },
+      "name": "Get Portfolio Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [900, 240]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 1 }]
+        }
+      },
+      "name": "Hourly Health Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8080/health",
+        "requestMethod": "GET",
+        "responseFormat": "json"
+      },
+      "name": "Health Ping",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 500]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [[{ "node": "Trigger ZEUS Pipeline", "type": "main", "index": 0 }]]
+    },
+    "Trigger ZEUS Pipeline": {
+      "main": [[{ "node": "Trades Executed?", "type": "main", "index": 0 }]]
+    },
+    "Trades Executed?": {
+      "main": [
+        [{ "node": "Get Portfolio Status", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Hourly Health Check": {
+      "main": [[{ "node": "Health Ping", "type": "main", "index": 0 }]]
+    }
+  }
+}

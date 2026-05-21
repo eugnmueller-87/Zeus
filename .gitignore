@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Data / secrets
+data/
+logs/
+*.db
+*.log
+
+# Environment variables
+.env
+.env.*
+
+# Config overrides with real keys
+# (settings.json is committed but must not contain real tokens)
+
+# n8n local data
+n8n_data/
+
+# IDE
+.vscode/
+.idea/
