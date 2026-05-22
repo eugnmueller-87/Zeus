@@ -112,3 +112,76 @@ Watches the portfolio every cycle. If total drawdown hits 8% — emergency halt,
 
 ## 📚 Apollo — The Librarian
 Runs daily in the background. Ingests arXiv trading research papers, pulls earnings transcripts from Hermes, keeps the supplier→ticker map fresh, and reads ZEUS's own past decisions to find patterns and improve its own strategy playbook.
+
+---
+
+## Signal Conviction Rating System
+
+Every signal that enters the pipeline gets scored. This is how we separate **"act now"** from **"ignore"** — using the same framework professional quant funds use.
+
+### The 5-Tier Conviction Scale
+
+| Tier | Label | What it means | Position size |
+|------|-------|---------------|---------------|
+| 🔴 **1** | **STRONG LONG** | All factors aligned, high confidence | Full size (2x base) |
+| 🟠 **2** | **MODERATE LONG** | Most factors aligned, some uncertainty | Half size (1x base) |
+| ⚪ **3** | **NEUTRAL** | Mixed signals — no edge | No trade |
+| 🔵 **4** | **MODERATE SHORT** | Factors lean negative | Reduced / hedge only |
+| 🟣 **5** | **STRONG SHORT** | Strong negative signal | Avoid / full short |
+
+The score is not a gut feeling. It is a **composite number [0–100]** built from weighted factors, where each factor's weight is determined by its historical predictive power (Information Coefficient, or IC).
+
+---
+
+### The 10 Signal Quality Factors (ranked by predictive power)
+
+These are the factors that academic research and professional quant funds have proven actually work. We build these into Pythia.
+
+| Rank | Factor | What it measures | Why it works |
+|------|--------|-----------------|--------------|
+| 1 | **Options implied sentiment** | Put/call skew + volatility | Smart money bets here first — options market leads price |
+| 2 | **Earnings surprise magnitude** | How much EPS beat/missed vs. consensus | Drift after surprise is one of the most robust effects in finance |
+| 3 | **Earnings revision direction** | Analysts raising or cutting estimates | Analysts are slow — revisions cluster and momentum follows |
+| 4 | **12-month price momentum** | Stock return vs. peers, last 12 months | Winners keep winning for ~6-12 months (Jegadeesh & Titman) |
+| 5 | **Short interest ratio** | Days-to-cover for shorts | Rising price + high short interest = squeeze setup |
+| 6 | **Volume anomaly** | Unusual volume vs. 20-day average | Big volume before price moves = informed buying |
+| 7 | **NLP earnings call sentiment** | Positive/negative language in transcripts | Forward-looking language predicts next quarter |
+| 8 | **Sector ETF momentum** | Is the whole sector moving? | Rising tide — individual stocks follow sector direction |
+| 9 | **Quality score** | Profitability + low debt + earnings stability | High-quality companies outperform over all regimes |
+| 10 | **ECB / Bund yield delta** | *(DAX-specific)* Rate movement direction | 80%+ of DAX revenues are international — ECB moves the market |
+
+---
+
+### DAX / German Market — What's Different
+
+German stocks don't behave like US stocks. Three things matter more here:
+
+1. **Macro beats earnings.** Only 18% of DAX revenue is Germany-domestic. ECB rate decisions, EUR/USD, and German Bund yields move the index more than individual earnings beats. Watch: **ECB meetings, Ifo Business Climate, Flash PMI, ZEW Sentiment.**
+
+2. **Sector composition is different.** DAX = ~20% Financials, ~18% Autos, ~15% Chemicals/Industrials. Autos are driven by China PMI. Chemicals by energy prices. Know your sector before trading.
+
+3. **EUR/USD is a tax on exporters.** Rising EUR = headwind for Volkswagen, BASF, Siemens. Always factor the EUR/USD trend when trading German exporters.
+
+---
+
+### Where This Lives in the Pipeline
+
+**Pythia owns the conviction score.** There is no separate Rating Agent — the IC-weighted scoring and the position sizing are the same calculation. Separating them would just add latency with no benefit.
+
+Pythia's upgrade path:
+- Today: simple hit-rate stats from SQLite → confidence → position size
+- Next: IC registry (rolling 63-day predictive power per factor) → composite score [0–100] → 5-tier discretization → position size multiplier (0.25x / 0.5x / 1.0x / 1.5x / 2.0x)
+
+---
+
+### Reference Repositories (built by professionals, not tutorials)
+
+These are the best open-source implementations to learn from and extract knowledge into Apollo's KB:
+
+| Repo | What to take from it |
+|------|---------------------|
+| [TradingAgents](https://github.com/TauricResearch/TradingAgents) | 5-tier conviction output, Bull/Bear researcher debate pattern, full agent prompts |
+| [FinRobot](https://github.com/AI4Finance-Foundation/FinRobot) | Market Forecaster + Trade Strategist prompt engineering |
+| [FinMem](https://github.com/pipiku915/FinMem-LLM-StockTrading) | Layered memory (short/medium/long-term) — maps directly to Pythia's pattern memory |
+| [AgenticTrading](https://github.com/Open-Finance-Lab/AgenticTrading) | Agent orchestration patterns for real-time composition |
+| [arXiv:2409.06289](https://arxiv.org/pdf/2409.06289) | LLM-generated alpha factors + IC-based pruning (53% return on SSE50) |
