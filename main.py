@@ -5,9 +5,11 @@ Two run modes:
   1. n8n webhook server (default) — n8n triggers ZEUS via HTTP POST
   2. Standalone loop — python main.py --standalone (for local testing)
 
-n8n calls POST /run  → ZEUS executes one pipeline cycle
-n8n calls POST /halt → ZEUS halts trading immediately
-n8n calls GET  /status → returns portfolio state as JSON
+Endpoints:
+  POST /run    → one pipeline cycle
+  POST /halt   → emergency halt
+  GET  /status → portfolio + agent health state
+  GET  /health → liveness check
 """
 
 from __future__ import annotations
@@ -15,12 +17,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from agents.zeus import ZeusOrchestrator, ZeusConfig
-from core.logging_setup import configure_logging
+from dotenv import load_dotenv
+
+from agents.zeus import ZeusConfig, ZeusOrchestrator
 from config.settings import load_settings
+from core.logging_setup import configure_logging
+
+load_dotenv()   # loads .env file if present
 
 logger = logging.getLogger("main")
 
@@ -28,15 +35,15 @@ logger = logging.getLogger("main")
 def build_zeus() -> ZeusOrchestrator:
     settings = load_settings()
     config = ZeusConfig(
-        max_portfolio_drawdown_pct=settings.get("max_drawdown_pct", 0.08),
-        max_open_positions=settings.get("max_open_positions", 10),
-        paper_trading=settings.get("paper_trading", True),
-        mock_execution=settings.get("mock_execution", True),
+        max_portfolio_drawdown_pct = settings.get("max_drawdown_pct", 0.08),
+        max_open_positions         = settings.get("max_open_positions", 10),
+        paper_trading              = settings.get("paper_trading", True),
+        mock_execution             = settings.get("mock_execution", True),
+        use_llm_reasoning          = settings.get("use_llm_reasoning", True),
     )
     zeus = ZeusOrchestrator(config)
 
     # Point Icarus at the live Hermes instance
-    import os
     zeus.icarus._base_url = settings.get("hermes_base_url", "https://hermes-agent-production-114e.up.railway.app")
     if not zeus.icarus._api_key:
         zeus.icarus._api_key = os.getenv("HERMES_API_KEY", "")
@@ -52,13 +59,6 @@ _zeus: ZeusOrchestrator | None = None
 
 
 class ZeusHandler(BaseHTTPRequestHandler):
-    """
-    Minimal HTTP server so n8n can trigger ZEUS pipeline runs.
-
-    n8n workflow example:
-      Trigger (Cron every 15min) → HTTP Request node → POST http://localhost:8080/run
-    """
-
     def log_message(self, format, *args):
         logger.debug("HTTP %s", format % args)
 
@@ -66,7 +66,9 @@ class ZeusHandler(BaseHTTPRequestHandler):
         if self.path == "/status":
             self._handle_status()
         elif self.path == "/health":
-            self._json_response(200, {"status": "ok"})
+            self._json_response(200, {"status": "ok", "pipeline": _zeus.status.value if _zeus else "not started"})
+        elif self.path == "/agents":
+            self._handle_agents()
         else:
             self._json_response(404, {"error": "not found"})
 
@@ -75,23 +77,26 @@ class ZeusHandler(BaseHTTPRequestHandler):
             self._handle_run()
         elif self.path == "/halt":
             self._handle_halt()
+        elif self.path == "/resume":
+            self._handle_resume()
         else:
             self._json_response(404, {"error": "not found"})
 
     def _handle_run(self):
-        global _zeus
         try:
             runs = _zeus.run_once()
             summary = [
                 {
-                    "run_id": r.run_id,
-                    "killed_at": r.killed_at_stage,
+                    "run_id":      r.run_id,
+                    "killed_at":   r.killed_at_stage,
                     "kill_reason": r.kill_reason,
+                    "reasoning":   r.trace.zeus_reasoning if r.trace else None,
                     "trade": {
-                        "symbol": r.trade_result.symbol,
-                        "side": r.trade_result.side,
+                        "symbol":   r.trade_result.symbol,
+                        "side":     r.trade_result.side,
                         "order_id": r.trade_result.order_id,
-                    } if r.trade_result else None,
+                        "fill":     r.trade_result.fill_price,
+                    } if r.trade_result and r.trade_result.symbol else None,
                 }
                 for r in runs
             ]
@@ -101,23 +106,42 @@ class ZeusHandler(BaseHTTPRequestHandler):
             self._json_response(500, {"error": str(exc)})
 
     def _handle_halt(self):
-        global _zeus
         _zeus.halt(reason="n8n manual halt")
         self._json_response(200, {"status": "halted"})
 
+    def _handle_resume(self):
+        _zeus.resume()
+        self._json_response(200, {"status": "running"})
+
     def _handle_status(self):
-        global _zeus
         state = _zeus.monitor._state
+        cb_status = _zeus.cb.status()
         self._json_response(200, {
-            "pipeline_status": _zeus.status.value,
-            "open_positions": _zeus.monitor.open_position_count(),
-            "equity": state.total_equity,
-            "drawdown_pct": round(state.current_drawdown_pct * 100, 2),
-            "paper_trading": _zeus.config.paper_trading,
+            "pipeline_status":  _zeus.status.value,
+            "open_positions":   _zeus.monitor.open_position_count(),
+            "equity":           state.total_equity,
+            "drawdown_pct":     round(state.current_drawdown_pct * 100, 2),
+            "paper_trading":    _zeus.config.paper_trading,
+            "mock_execution":   _zeus.config.mock_execution,
+            "circuit_breakers": cb_status,
+        })
+
+    def _handle_agents(self):
+        reports = _zeus.get_health_reports()
+        self._json_response(200, {
+            "agents": [
+                {
+                    "name":    r.agent_name,
+                    "status":  r.status.value,
+                    "message": r.message,
+                    "checked": r.checked_at.isoformat(),
+                }
+                for r in reports
+            ]
         })
 
     def _json_response(self, code: int, body: dict):
-        payload = json.dumps(body).encode()
+        payload = json.dumps(body, default=str).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(payload))
@@ -129,25 +153,26 @@ def run_webhook_server(host: str = "0.0.0.0", port: int = 8080):
     global _zeus
     _zeus = build_zeus()
     server = HTTPServer((host, port), ZeusHandler)
-    logger.info("[MAIN] ZEUS webhook server listening on %s:%d", host, port)
-    logger.info("[MAIN] n8n → POST http://localhost:%d/run  to trigger a pipeline cycle", port)
+    logger.info("[MAIN] ZEUS webhook server on %s:%d", host, port)
+    logger.info("[MAIN] n8n → POST http://localhost:%d/run", port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("[MAIN] Shutting down.")
+        _zeus.watchdog.stop()
 
 
 # ---------------------------------------------------------------------------
-# Standalone loop (for local testing without n8n)
+# Standalone loop
 # ---------------------------------------------------------------------------
 
 def run_standalone(interval_seconds: int = 900):
     zeus = build_zeus()
-    logger.info("[MAIN] Standalone mode — polling every %ds", interval_seconds)
+    logger.info("[MAIN] Standalone mode — every %ds", interval_seconds)
     while True:
         try:
             runs = zeus.run_once()
-            logger.info("[MAIN] Cycle complete — %d pipeline run(s).", len(runs))
+            logger.info("[MAIN] Cycle complete — %d run(s).", len(runs))
         except Exception as exc:
             logger.exception("[MAIN] Cycle error: %s", exc)
         time.sleep(interval_seconds)
@@ -160,9 +185,9 @@ def run_standalone(interval_seconds: int = 900):
 if __name__ == "__main__":
     configure_logging()
     parser = argparse.ArgumentParser(description="ZEUS Trading Orchestrator")
-    parser.add_argument("--standalone", action="store_true", help="Run polling loop instead of webhook server")
-    parser.add_argument("--interval", type=int, default=900, help="Polling interval in seconds (standalone mode)")
-    parser.add_argument("--port", type=int, default=8080, help="Webhook server port")
+    parser.add_argument("--standalone", action="store_true")
+    parser.add_argument("--interval", type=int, default=900)
+    parser.add_argument("--port",     type=int, default=8080)
     args = parser.parse_args()
 
     if args.standalone:
