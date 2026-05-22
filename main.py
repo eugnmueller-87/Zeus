@@ -75,6 +75,8 @@ class ZeusHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/run":
             self._handle_run()
+        elif self.path == "/run/research":
+            self._handle_research()
         elif self.path == "/halt":
             self._handle_halt()
         elif self.path == "/resume":
@@ -103,6 +105,14 @@ class ZeusHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"pipeline_runs": summary, "count": len(runs)})
         except Exception as exc:
             logger.exception("[MAIN] /run failed")
+            self._json_response(500, {"error": str(exc)})
+
+    def _handle_research(self):
+        try:
+            summary = _zeus.run_research_cycle()
+            self._json_response(200, {"status": "ok", "research": summary})
+        except Exception as exc:
+            logger.exception("[MAIN] /run/research failed")
             self._json_response(500, {"error": str(exc)})
 
     def _handle_halt(self):

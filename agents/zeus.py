@@ -41,6 +41,7 @@ from agents.pattern import PatternAgent
 from agents.execution import ExecutionAgent
 from agents.execution_mock import MockExecutionAgent
 from agents.monitor import MonitorAgent
+from agents.apollo import ApolloAgent
 
 logger = logging.getLogger("zeus")
 
@@ -105,6 +106,7 @@ class ZeusOrchestrator:
             on_kill=self._emergency_halt,
             alert_fn=self._send_alert,
         )
+        self.apollo    = ApolloAgent(knowledge_base=self.kb)   # injected with shared KB
 
         # LLM client for reasoning step
         self._claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
@@ -141,6 +143,10 @@ class ZeusOrchestrator:
 
         self.cb.call("monitor", fn=self.monitor.refresh, fallback=None)
         return runs
+
+    def run_research_cycle(self) -> dict:
+        """Trigger Apollo's daily research cycle — ingest literature, update tickers, self-improve."""
+        return self.cb.call("apollo", fn=self.apollo.run_research_cycle, fallback={"error": "circuit open"})
 
     def halt(self, reason: str = "manual") -> None:
         self.status = PipelineStatus.HALTED
@@ -424,3 +430,4 @@ Respond in this exact JSON format:
         self.watchdog.register("pattern",   self.pattern.health)
         self.watchdog.register("execution", self.execution.health)
         self.watchdog.register("monitor",   self.monitor.health)
+        self.watchdog.register("apollo",    self.apollo.health)
