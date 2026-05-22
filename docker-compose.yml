@@ -3,7 +3,7 @@ version: "3.8"
 services:
   n8n:
     image: n8nio/n8n:latest
-    container_name: zeus_n8n
+    container_name: pantheon_n8n
     restart: unless-stopped
     ports:
       - "5678:5678"
@@ -15,7 +15,33 @@ services:
       - GENERIC_TIMEZONE=Europe/Berlin
       - TZ=Europe/Berlin
     volumes:
-      - zeus_n8n_data:/home/node/.n8n
+      - pantheon_n8n_data:/home/node/.n8n
+
+  dashboard-backend:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile.backend
+    container_name: pantheon_dashboard_backend
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    env_file: .env
+    environment:
+      - TZ=Europe/Berlin
+    volumes:
+      - ./data:/app/data        # shared SQLite + ChromaDB
+      - ./knowledge:/app/knowledge
+
+  dashboard-frontend:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile.frontend
+    container_name: pantheon_dashboard_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - dashboard-backend
 
 volumes:
-  zeus_n8n_data:
+  pantheon_n8n_data:

@@ -247,9 +247,51 @@ SpendLens reads via HermesClient:
 
 ---
 
+## Executive Dashboard
+
+Real-time trading UI — Bloomberg-style dark terminal. Streams pipeline events via WebSocket.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ⚡ PANTHEON OS  [LIVE] ● PAPER    Equity: €52,340  DD: 1.2%   │
+├─────────────┬──────────────────────────────┬────────────────────┤
+│  PIPELINE   │  EQUITY CURVE  ~~~^~~~^~~~   │  PORTFOLIO         │
+│  ICARUS 🦅● │                              │  Drawdown ████░ 8% │
+│     ↓       ├──────────────────────────────┤  Circuit Breakers  │
+│  HADES  ⚖️● │  LIVE FEED                   ├────────────────────┤
+│     ↓       │  20:14 TRADE SAP BUY ✓       │ ⚡ ZEUS REASONING  │
+│  ARTEMIS 🌙●│  20:13 KILL Hades:OFAC       │ "Macro regime      │
+│     ↓       │  20:12 SIGNAL Infineon       │  supports energy   │
+│  PYTHIA 🔮● │  20:11 TRADE RWE  BUY ✓      │  long. 68% hit     │
+│     ↓       │                              │  rate. Approved."  │
+│  ZEUS   ⚡● │                              │                    │
+│     ↓       │                              │                    │
+│  ARES   ⚔️● │                              │                    │
+│     ↓       │                              │                    │
+│  ARGUS  👁️● │                              │                    │
+│  ────────── │                              │                    │
+│  APOLLO 📚● │                              │                    │
+└─────────────┴──────────────────────────────┴────────────────────┘
+```
+
+**Start locally:**
+```powershell
+pip install -r requirements.txt
+cd dashboard\frontend && npm install && cd ..\..
+.\dashboard\start_dev.ps1
+# Dashboard → http://localhost:3000
+```
+
+**Deploy with Docker:**
+```bash
+docker compose up -d dashboard-backend dashboard-frontend
+```
+
+---
+
 ## Roadmap
 
-- [x] 7-agent pipeline (Icarus → Hades → Trend → Pattern → Execution → Monitor + Apollo)
+- [x] 8-agent pipeline (Icarus → Hades → Artemis → Pythia → ZEUS → Ares → Argus + Apollo)
 - [x] ChromaDB knowledge base with curated trading fundamentals
 - [x] Per-agent private skills knowledge bases
 - [x] Circuit breakers + Watchdog daemon (zero-outage design)
@@ -258,8 +300,9 @@ SpendLens reads via HermesClient:
 - [x] n8n webhook integration + Docker Compose
 - [x] Upstash Redis bridge → SpendLens intelligence feed
 - [x] Apollo daily research cycle (arXiv, Hermes earnings, ticker map, self-improvement)
+- [x] Executive dashboard — Bloomberg-style real-time UI (React + FastAPI WebSocket)
 - [ ] Iris agent — Icarus signal triage split (separate fetch from interpretation)
-- [ ] OpenBB swap in TrendAgent (DAX + EURO STOXX 50 coverage)
+- [ ] OpenBB swap in Artemis (DAX + EURO STOXX 50 coverage)
 - [ ] IBKR account live — switch `mock_execution: false`
 - [ ] Phase 2 — Redis Streams async event bus between agents
 - [ ] Phase 3 — Crypto layer via Binance EU
