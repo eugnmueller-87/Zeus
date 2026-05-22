@@ -2,6 +2,79 @@
 
 ---
 
+## How the Agents Talk to Each Other
+
+One strict rule: **no agent ever talks directly to another agent.** Only ZEUS is allowed to call them. Think of it like a company where every employee reports to the CEO — nobody goes around them.
+
+### The Signal Pipeline (runs every 15 minutes, triggered by n8n)
+
+```
+  Hermes API (590+ suppliers, live market intelligence)
+       │
+       ▼
+  🦅 ICARUS ──────── fetches raw signals, enriches with ticker symbols
+       │
+       │  RawSignal { headline, supplier, category, severity, tickers }
+       ▼
+  ⚖️  HADES ──────── compliance check against OFAC / ESG / EU sanctions
+       │
+       │  FilteredSignal { compliance_score, notes }   ← KILL here if sanctioned
+       ▼
+  🌙 ARTEMIS ─────── pulls VIX + S&P500 + sector ETFs, classifies regime
+       │
+       │  MacroContext { regime, vix, suppress }        ← SUPPRESS here if VIX ≥ 35
+       ▼
+  🔮 PYTHIA ──────── looks up historical win rate for this exact context
+       │
+       │  SizedSignal { confidence, position_size_pct } ← SKIP if confidence too low
+       ▼
+  ⚡ ZEUS ─────────── queries KB + asks Claude AI: approve / reject / resize?
+       │
+       │  Decision { approved, reasoning, override_size }  ← REJECT if not convinced
+       ▼
+  ⚔️  ARES ───────── places bracket order on Interactive Brokers
+       │
+       │  TradeResult { symbol, side, fill_price, order_id }
+       ▼
+  👁️  ARGUS ──────── monitors portfolio, checks drawdown, backfills P&L to Pythia
+```
+
+### The Daily Research Cycle (runs once per day, independent)
+
+```
+  📚 APOLLO ── runs parallel, never blocks the signal pipeline
+       ├── arXiv q-fin papers ──────────────► ChromaDB knowledge base
+       ├── Hermes earnings transcripts ──────► ChromaDB knowledge base
+       ├── New suppliers from signals ───────► ticker_map.json (Apollo maps them)
+       └── ZEUS past decisions + outcomes ──► zeus_skills.md (self-improvement)
+```
+
+### What Gets Passed Between Stages
+
+| From → To | What's handed over | Can it be killed? |
+|---|---|---|
+| Icarus → Hades | Raw signal (headline, supplier, tickers) | No — always goes to Hades |
+| Hades → Artemis | Filtered signal + compliance score | Yes — OFAC/sanctions = hard kill |
+| Artemis → Pythia | Macro context (VIX, regime) | Yes — extreme VIX or bear market = suppress |
+| Pythia → ZEUS | Sized signal (confidence %, position size) | Yes — low confidence = skip |
+| ZEUS → Ares | Approved trade (with optional resize) | Yes — Claude rejects it = no trade |
+| Ares → Argus | Trade result (fill price, order ID) | No — Argus always monitors |
+| Argus → Pythia | Closed trade P&L (feedback loop) | No — always feeds back |
+
+### The Golden Rule
+
+> **ZEUS is the only file allowed to import from `agents/`.**
+> All agents import from `core/types` only — no agent knows another agent exists.
+> This means any agent can be replaced, upgraded, or turned off without breaking anything else.
+
+### Circuit Breakers
+
+Every agent call is wrapped in a circuit breaker. If an agent fails 3 times in 5 minutes, the breaker opens and ZEUS uses a safe fallback instead of crashing the whole pipeline. The Watchdog daemon checks all agents every 30 seconds and auto-restarts failed ones.
+
+---
+
+---
+
 ## ⚡ ZEUS — The Boss
 Runs the whole show. Every other agent reports to ZEUS. Nothing happens without its approval. It reads the knowledge base, asks Claude AI "should we trade this?", and makes the final call.
 
