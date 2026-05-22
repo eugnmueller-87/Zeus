@@ -7,31 +7,46 @@
 ![Scheduling](https://img.shields.io/badge/Scheduling-n8n-EA4B71?style=flat&logo=n8n&logoColor=white)
 ![Alerts](https://img.shields.io/badge/Alerts-Telegram-26A5E4?style=flat&logo=telegram&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat&logo=docker&logoColor=white)
+![ChromaDB](https://img.shields.io/badge/KB-ChromaDB-FF6B35?style=flat)
+![Redis](https://img.shields.io/badge/Bridge-Upstash%20Redis-DC382D?style=flat&logo=redis&logoColor=white)
 
-> **6-agent autonomous trading system for German markets. ZEUS is the supreme orchestrator — all agents report to it. Zero babysitting once deployed.**
+> **7-agent autonomous trading system for German markets. ZEUS is the supreme orchestrator — all agents report to it. Zero babysitting once deployed.**
 
 ---
 
 ## Architecture
 
 ```
-Hermes RSS feeds
-      ↓
- [1] Icarus — Signal Watcher
-      ↓  structured RawSignal
- [2] Hades — Compliance Filter        ← OFAC · ESG · blocked tickers
-      ↓  FilteredSignal (or KILL)
- [3] Trend Analyzer                   ← VIX · market regime · sector momentum
-      ↓  MacroContext (or SUPPRESS)
- [4] Pattern Learner                  ← SQLite hit rates → Kelly-sized positions
-      ↓  SizedSignal (or SKIP)
- [5] Execution Agent                  ← IBKR bracket order (entry + SL + TP)
-      ↓  TradeResult
- [6] Monitor                          ← drawdown kill switch · Telegram alerts
-      ↓  outcome → Pattern Learner (feedback loop)
+  Hermes (live Railway API — 590+ suppliers)
+        ↓
+  [1] Icarus — Signal Watcher
+        ↓  RawSignal
+  [2] Hades — Compliance Filter        ← OFAC · EU sanctions · ESG · LkSG
+        ↓  FilteredSignal (or KILL)
+  [3] Trend Analyzer                   ← VIX · S&P500 regime · sector ETFs
+        ↓  MacroContext (or SUPPRESS)
+  [4] Pattern Learner                  ← SQLite hit rates → Kelly-sized positions
+        ↓  SizedSignal (or SKIP)
+  [5] ZEUS LLM Reasoning               ← Claude Haiku · ChromaDB KB · past decisions
+        ↓  approved / resized / rejected
+  [6] Execution Agent                  ← IBKR bracket order (entry + SL + TP)
+        ↓  TradeResult
+  [7] Monitor                          ← drawdown kill switch · Telegram alerts
+        ↓  outcome → Pattern + KB (feedback loop)
+
+  [Apollo] — Daily research cycle (runs parallel, not in signal path)
+     ├── arXiv q-fin paper ingestion → ChromaDB
+     ├── Hermes earnings enrichment → ChromaDB
+     ├── Ticker map maintenance → data/ticker_map.json
+     └── Self-improvement loop → analyses traces → updates zeus_skills.md
+
+  Upstash Redis bridge → SpendLens (procurement intelligence platform)
+     ├── zeus:macro:latest          — live market regime
+     ├── zeus:decisions:recent      — ZEUS trade decisions as Icarus signals
+     └── zeus:supplier_risk:{slug}  — Hades compliance per vendor
 ```
 
-**ZEUS** owns the entire pipeline. No agent communicates with another directly — all routing goes through ZEUS.
+**ZEUS** owns the entire pipeline. No agent communicates with another directly. Only `zeus.py` imports from `agents/*`. All agents import from `core.types` only — no spaghetti.
 
 ---
 
@@ -39,28 +54,45 @@ Hermes RSS feeds
 
 | # | Agent | Role |
 |---|---|---|
-| 1 | **Icarus** | Monitors RSS feeds (Hermes). Classifies events by category and severity. Emits structured signals. |
-| 2 | **Hades** | Compliance firewall. OFAC sanctions, ESG sector flags, blocked tickers → hard kill or severity downgrade. |
-| 3 | **Trend** | Pulls macro context via yfinance: VIX level, S&P 500 regime (bull/bear/sideways), sector ETF momentum. Suppresses signals that are valid in isolation but wrong for current macro. |
-| 4 | **Pattern** | Learning agent. Stores every signal → trade → outcome in SQLite. Derives position size from historical hit rates per (signal category × market regime × VIX band). Kelly-inspired sizing. |
-| 5 | **Execution** | Places bracket orders on Interactive Brokers via `ib_insync`. Entry + stop-loss (3%) + take-profit (6%). Paper port 7497 / live port 7496. |
-| 6 | **Monitor** | Tracks portfolio equity and drawdown in real time. Fires emergency halt + Telegram alert if max drawdown is breached. Feeds closed-trade outcomes back to Pattern. |
+| 1 | **Icarus** | Monitors the live Hermes API (590+ suppliers on Railway). Classifies events by category and severity. Deduplicates across cycles. Emits structured `RawSignal` objects. |
+| 2 | **Hades** | Compliance firewall. OFAC sanctions, EU sanctions (BaFin/Reg 833/2014), ESG sector flags, LkSG violations, blocked tickers → hard kill or severity downgrade. Full audit trail. |
+| 3 | **Trend** | Fetches VIX, S&P 500 1-month return, and 6 sector ETFs via yfinance. Classifies market regime (bull/bear/sideways). Suppresses signals that conflict with macro environment. 15-min cache. |
+| 4 | **Pattern** | Learning agent. Every signal → outcome stored in SQLite. Derives position size from historical hit rates per `{category}×{regime}×{VIX band}`. Kelly-inspired sizing (capped at 5%). Requires 10+ samples before trusting learned stats. |
+| 5 | **Execution** | Places bracket orders on Interactive Brokers via `ib_insync`. Entry + 3% stop-loss + 6% take-profit. XETRA-aware (EUR-denominated). Paper port 7497 / live port 7496. |
+| 6 | **Monitor** | Tracks portfolio equity and drawdown in real time from IB. Emergency halt + Telegram alert if drawdown ≥ 8%. Backfills closed-trade P&L into Pattern and ChromaDB. |
+| 7 | **Apollo** | Research & knowledge agent. Runs daily: ingests arXiv q-fin papers, crawls Hermes for earnings transcripts, maintains the live supplier→ticker map, and runs the self-improvement loop — analysing decision traces and writing insights back into ZEUS's knowledge base. |
+
+---
+
+## The Knowledge Layer
+
+ZEUS learns from every trade. Three stores work together:
+
+| Store | What lives here | Used by |
+|---|---|---|
+| **ChromaDB** (`data/chroma`) | Curated trading knowledge, macro playbooks, signal guides, academic papers (arXiv), decision traces with outcomes | ZEUS LLM reasoning step |
+| **SQLite** (`data/trade_log.db`) | Raw signal → outcome records for statistical hit-rate tracking | Pattern Learner |
+| **`data/ticker_map.json`** | Live supplier → ticker symbol map, expanded by Apollo each cycle | Icarus (signal enrichment) |
+
+Each agent also has a private skills file (`knowledge/agents/{name}_skills.md`) loaded at startup — domain expertise the agent queries before acting.
 
 ---
 
 ## Tech Stack
 
-| Component | Tool |
-|---|---|
-| Orchestration | ZEUS (custom) |
-| Scheduling | n8n (webhook trigger every 15 min) |
-| Market data | yfinance |
-| Execution | Interactive Brokers API (`ib_insync`) |
-| Trade memory | SQLite → ChromaDB (Phase 2) |
-| Agent reasoning | LangGraph (Phase 2) |
-| Event bus | Redis Streams (Phase 2) |
-| Alerts | Telegram Bot API |
-| Infrastructure | Docker Compose |
+| Component | Tool | Why |
+|---|---|---|
+| Orchestration | `zeus.py` (plain Python) | Full control, no framework overhead, clean audit trail |
+| Signal source | Hermes (Railway) | Live market intelligence for 590+ procurement suppliers |
+| Scheduling | n8n | Visual webhook scheduler, no Python dependency, easy to extend |
+| Market data | yfinance | Free, reliable for VIX + SPY + sector ETFs |
+| Knowledge base | ChromaDB | Local persistent vector store, no infrastructure required |
+| Trade memory | SQLite | Zero-config, sufficient for Phase 1 hit-rate stats |
+| LLM reasoning | Claude Haiku (Anthropic) | ~$0.001/call, fast, structured JSON output |
+| Execution | Interactive Brokers (`ib_insync`) | EU-regulated, German residents supported, full Python API |
+| Alerts | Telegram Bot API | Instant mobile alerts for halts and trades |
+| Intelligence bridge | Upstash Redis | Shared with SpendLens — ZEUS writes `zeus:*` keys |
+| Infrastructure | Docker Compose | n8n container, persistent volumes |
 
 ---
 
@@ -72,7 +104,20 @@ Hermes RSS feeds
 pip install -r requirements.txt
 ```
 
-### 2. Start n8n
+### 2. Configure environment
+
+Copy `.env.example` to `.env` and fill in:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+HERMES_API_KEY=
+UPSTASH_REDIS_REST_URL=https://...
+UPSTASH_REDIS_REST_TOKEN=...
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+### 3. Start n8n
 
 ```bash
 docker compose up -d
@@ -80,22 +125,7 @@ docker compose up -d
 # Import config/n8n_workflow.json
 ```
 
-### 3. Configure
-
-Edit `config/settings.json`:
-
-```json
-{
-  "paper_trading": true,
-  "mock_execution": true,
-  "max_drawdown_pct": 0.08,
-  "hermes_feeds": ["https://your-rss-feed-url"],
-  "telegram_bot_token": "your_token",
-  "telegram_chat_id": "your_chat_id"
-}
-```
-
-### 4. Run the smoke test (no IB Gateway needed)
+### 4. Run the smoke test (no IB Gateway or API keys needed)
 
 ```bash
 python test_pipeline.py
@@ -106,13 +136,25 @@ python test_pipeline.py
 ```bash
 python main.py
 # ZEUS listens on http://localhost:8080
-# n8n → POST /run   triggers a pipeline cycle
-# n8n → GET  /status returns portfolio state
 ```
 
-### 6. Switch to live paper trading (requires IBKR account)
+### 6. Switch to live paper trading
 
-Set `"mock_execution": false` in `settings.json`, start IB Gateway on port 7497, then restart ZEUS.
+Set `"mock_execution": false` in `config/settings.json`, start IB Gateway on port 7497, then restart ZEUS.
+
+---
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/run` | Trigger one pipeline cycle (Icarus → Monitor) |
+| `POST` | `/run/research` | Trigger Apollo's daily research cycle |
+| `POST` | `/halt` | Emergency halt — cancels pending orders |
+| `POST` | `/resume` | Resume after halt |
+| `GET` | `/status` | Portfolio equity, drawdown, circuit breaker states |
+| `GET` | `/health` | Liveness check |
+| `GET` | `/agents` | Watchdog health report for all 7 agents |
 
 ---
 
@@ -121,23 +163,12 @@ Set `"mock_execution": false` in `settings.json`, start IB Gateway on port 7497,
 | Trigger | Action |
 |---|---|
 | Portfolio drawdown ≥ 8% | Emergency halt + Telegram alert |
-| OFAC entity match | Signal killed at Hades |
-| ESG sector flag | Signal severity downgraded |
+| OFAC / EU sanctions match | Signal killed at Hades, logged for audit |
+| ESG / LkSG flag | Signal severity downgraded |
 | VIX ≥ 35 | All signals suppressed |
 | Bear regime + high VIX | Positive signals suppressed |
-| `POST /halt` | Manual halt via n8n |
-
----
-
-## Roadmap
-
-- [x] Phase 1 — Core pipeline (Icarus → Hades → Trend → Pattern → Execution → Monitor)
-- [x] Mock execution layer for pre-IBKR testing
-- [x] n8n webhook integration + Docker Compose
-- [ ] Phase 2 — Redis Streams event bus between agents
-- [ ] Phase 2 — LangGraph reasoning layer for Pattern + Trend agents
-- [ ] Phase 2 — ChromaDB semantic trade memory
-- [ ] Phase 3 — Crypto layer via Binance EU
+| Agent failure (3 restarts) | Watchdog alert + graceful degradation via circuit breaker |
+| `POST /halt` | Manual halt via n8n or direct API call |
 
 ---
 
@@ -145,32 +176,99 @@ Set `"mock_execution": false` in `settings.json`, start IB Gateway on port 7497,
 
 ```
 ZEUS/
-├── main.py                   # Entry point — webhook server + standalone mode
-├── test_pipeline.py          # Smoke test (no IB required)
+├── main.py                      # Webhook server + standalone mode
+├── test_pipeline.py             # Smoke test (no IB or API keys required)
 ├── requirements.txt
-├── docker-compose.yml        # n8n
+├── docker-compose.yml           # n8n
 ├── agents/
-│   ├── zeus.py               # Supreme orchestrator
-│   ├── icarus.py             # RSS signal watcher
-│   ├── hades.py              # Compliance filter
-│   ├── trend.py              # Macro context analyzer
-│   ├── pattern.py            # Learning + position sizing
-│   ├── execution.py          # IBKR live/paper execution
-│   └── execution_mock.py     # Mock execution (no IB needed)
+│   ├── zeus.py                  # Supreme orchestrator — owns the pipeline
+│   ├── icarus.py                # Hermes signal watcher
+│   ├── hades.py                 # Compliance filter (OFAC, ESG, EU sanctions)
+│   ├── trend.py                 # Macro context (VIX, regime, sector momentum)
+│   ├── pattern.py               # Learning agent — Kelly-sized positions
+│   ├── execution.py             # IBKR live/paper execution
+│   ├── execution_mock.py        # Mock execution (no IB needed)
+│   ├── monitor.py               # Drawdown kill switch + Telegram alerts
+│   └── apollo.py                # Research agent — KB seeding + self-improvement
+├── core/
+│   ├── types.py                 # Single source of truth for all data contracts
+│   ├── knowledge_base.py        # ChromaDB wrapper (shared KB)
+│   ├── agent_knowledge.py       # Per-agent private skills KB
+│   ├── circuit_breaker.py       # Per-agent fault isolation
+│   ├── watchdog.py              # Agent health daemon + auto-restart
+│   ├── redis_bridge.py          # ZEUS → SpendLens intelligence feed
+│   └── logging_setup.py
+├── knowledge/
+│   ├── trading_fundamentals.md  # R/R rules, Kelly, entry timing
+│   ├── macro_playbooks.md       # Bull/bear/sideways/high-vol playbooks
+│   ├── signal_interpretation.md # Per signal type: trade logic, direction
+│   ├── risk_management.md       # Three laws, drawdown levels, stop placement
+│   ├── sector_dynamics.md       # Tech/Energy/Financials/Healthcare characteristics
+│   └── agents/
+│       ├── icarus_skills.md
+│       ├── hades_skills.md
+│       ├── trend_skills.md
+│       ├── pattern_skills.md
+│       ├── execution_skills.md
+│       ├── monitor_skills.md
+│       ├── zeus_skills.md
+│       └── apollo_skills.md
 ├── config/
-│   ├── settings.json         # Runtime config
-│   └── n8n_workflow.json     # Importable n8n workflow
-└── core/
-    └── logging_setup.py
+│   ├── settings.json            # Runtime config (paper/live, drawdown limits)
+│   └── n8n_workflow.json        # Importable n8n workflow
+└── data/
+    ├── chroma/                  # ChromaDB persistent store
+    ├── trade_log.db             # SQLite trade history
+    └── ticker_map.json          # Live supplier → ticker map (maintained by Apollo)
 ```
+
+---
+
+## SpendLens Integration
+
+ZEUS writes live intelligence to a shared Upstash Redis instance, readable by [SpendLens](https://github.com/eugnmueller-87/PROCUREMENT) — a procurement intelligence platform that tracks vendor spend and risk.
+
+```
+ZEUS pipeline run
+  → Hades assesses supplier      → zeus:supplier_risk:{slug}
+  → Trend classifies macro       → zeus:macro:latest
+  → ZEUS approves/rejects trade  → zeus:decision:{trace_id}
+                                    zeus:decisions:recent (last 50)
+
+SpendLens reads via HermesClient:
+  GET /api/zeus/macro             — live market regime for category strategy
+  GET /api/zeus/decisions         — ZEUS trade decisions on Icarus AI screen
+  GET /api/suppliers/{name}/zeus-risk  — Hades compliance per vendor
+```
+
+---
+
+## Roadmap
+
+- [x] 7-agent pipeline (Icarus → Hades → Trend → Pattern → Execution → Monitor + Apollo)
+- [x] ChromaDB knowledge base with curated trading fundamentals
+- [x] Per-agent private skills knowledge bases
+- [x] Circuit breakers + Watchdog daemon (zero-outage design)
+- [x] Claude Haiku LLM reasoning step in ZEUS
+- [x] Mock execution layer for pre-IBKR testing
+- [x] n8n webhook integration + Docker Compose
+- [x] Upstash Redis bridge → SpendLens intelligence feed
+- [x] Apollo daily research cycle (arXiv, Hermes earnings, ticker map, self-improvement)
+- [ ] Iris agent — Icarus signal triage split (separate fetch from interpretation)
+- [ ] OpenBB swap in TrendAgent (DAX + EURO STOXX 50 coverage)
+- [ ] IBKR account live — switch `mock_execution: false`
+- [ ] Phase 2 — Redis Streams async event bus between agents
+- [ ] Phase 3 — Crypto layer via Binance EU
 
 ---
 
 ## Notes
 
-- **Germany-based**: Alpaca does not support German residents. Interactive Brokers (IBKR) is the execution layer — EU-regulated, full Python API, paper trading available for free.
+- **Germany-based**: Alpaca does not support German residents. Interactive Brokers (IBKR) is the execution layer — EU-regulated, German tax-compliant (Abgeltungsteuer), paper trading available for free.
 - **Paper trading by default**: `"paper_trading": true` and `"mock_execution": true` in settings. No real money at risk until explicitly opted in.
-- **Pattern learning needs data**: The Pattern agent requires ~10 historical trades per context key (signal category × regime × VIX band) before learned hit rates replace default sizing. Run paper trading for 4–6 weeks before the learning layer becomes meaningful.
+- **Pattern learning needs data**: The Pattern agent requires ~10 historical trades per context key (`{category}×{regime}×{VIX band}`) before learned hit rates replace default sizing. Run paper trading for 4–6 weeks before the learning layer becomes meaningful.
+- **Apollo seeds the KB**: On first run, Apollo initialises `data/ticker_map.json` with 40+ pre-mapped suppliers. Daily cycles expand this automatically from live Hermes signals.
+- **No framework overhead**: Orchestration is plain Python in `zeus.py`. No LangGraph, no LangChain. Every stage is visible, debuggable, and testable in isolation.
 
 ---
 
