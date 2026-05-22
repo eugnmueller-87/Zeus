@@ -33,6 +33,7 @@ from core.knowledge_base import KnowledgeBase
 from core.circuit_breaker import CircuitBreaker
 from core.watchdog import Watchdog
 from core.redis_bridge import RedisBridge
+from core.milestone_manager import MilestoneManager
 
 from agents.icarus import IcarusAgent
 from agents.hades import HadesAgent
@@ -52,8 +53,9 @@ class ZeusConfig:
     max_open_positions:         int   = 10
     paper_trading:              bool  = True
     mock_execution:             bool  = True
-    min_zeus_confidence:        float = 0.55   # ZEUS won't trade below this even if Pattern says go
-    use_llm_reasoning:          bool  = True   # set False to skip Claude call (faster, less cost)
+    min_zeus_confidence:        float = 0.55
+    use_llm_reasoning:          bool  = True
+    starting_equity:            float = 100.0  # seed capital — MilestoneManager tracks from here
 
 
 @dataclass
@@ -91,22 +93,27 @@ class ZeusOrchestrator:
         self.status = PipelineStatus.RUNNING
 
         # Core infrastructure
-        self.kb      = KnowledgeBase()
-        self.cb      = CircuitBreaker(failure_threshold=3, window_seconds=300, reset_timeout=120)
-        self.watchdog = Watchdog(alert_fn=self._send_alert)
+        self.kb        = KnowledgeBase()
+        self.cb        = CircuitBreaker(failure_threshold=3, window_seconds=300, reset_timeout=120)
+        self.watchdog  = Watchdog(alert_fn=self._send_alert)
+        self.milestone = MilestoneManager(
+            starting_equity=self.config.starting_equity,
+            alert_fn=self._send_alert,
+        )
 
         # Agents — ZEUS holds the only references
         self.icarus    = IcarusAgent()
         self.hades     = HadesAgent()
         self.artemis   = ArtemisAgent()
-        self.pythia    = PythiaAgent()
+        self.pythia    = PythiaAgent(milestone_manager=self.milestone)
         self.ares      = AresMockAgent() if self.config.mock_execution else AresAgent(paper=self.config.paper_trading)
         self.argus     = ArgusAgent(
             max_drawdown_pct=self.config.max_portfolio_drawdown_pct,
             on_kill=self._emergency_halt,
             alert_fn=self._send_alert,
+            milestone_manager=self.milestone,
         )
-        self.apollo    = ApolloAgent(knowledge_base=self.kb)   # injected with shared KB
+        self.apollo    = ApolloAgent(knowledge_base=self.kb)
 
         # LLM client for reasoning step
         self._claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
@@ -172,6 +179,9 @@ class ZeusOrchestrator:
 
     def get_health_reports(self) -> list[HealthReport]:
         return self.watchdog.poll_now()
+
+    def get_milestone_status(self) -> dict:
+        return self.milestone.status_dict()
 
     # ------------------------------------------------------------------
     # Pipeline

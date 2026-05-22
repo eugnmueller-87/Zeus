@@ -29,10 +29,11 @@ _MIN_CONFIDENCE      = 0.45
 
 
 class PythiaAgent:
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: Path = DB_PATH, milestone_manager=None):
+        self.db_path   = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._milestone = milestone_manager   # injected by ZEUS
         self.kb = AgentKnowledgeBase("pythia")
 
     def health(self) -> AgentHealth:
@@ -56,6 +57,21 @@ class PythiaAgent:
             position_pct = min(0.05, _DEFAULT_SIZE_PCT + edge * 0.03)
             logger.info("[PYTHIA] key=%s n=%d hit_rate=%.2f size=%.2f%%",
                         key, stats["n"], confidence, position_pct * 100)
+
+        # Milestone hard cap — never exceed stage's max position size
+        if self._milestone:
+            stage_cfg     = self._milestone.config
+            position_pct  = min(position_pct, stage_cfg.max_position_pct)
+            # Block signal if conviction tier not allowed at this stage
+            # Tier 1 = confidence >= 0.70, Tier 2 = >= 0.55, Tier 3 = >= 0.45
+            tier = 1 if confidence >= 0.70 else 2 if confidence >= 0.55 else 3
+            if tier not in stage_cfg.allowed_tiers:
+                return SizedSignal(
+                    original=signal, macro=macro,
+                    confidence=confidence, position_size_pct=0.0,
+                    skip=True,
+                    skip_reason=f"Stage {stage_cfg.stage.value}: tier {tier} not allowed (need {stage_cfg.allowed_tiers})",
+                )
 
         skip = confidence < _MIN_CONFIDENCE
         return SizedSignal(

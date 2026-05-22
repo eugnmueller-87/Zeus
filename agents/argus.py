@@ -44,11 +44,12 @@ class PortfolioState:
 class ArgusAgent:
     def __init__(
         self,
-        max_drawdown_pct: float                          = 0.08,
-        on_kill:          Optional[Callable[[str], None]] = None,
-        alert_fn:         Optional[Callable[[str], None]] = None,
-        telegram_token:   Optional[str]                  = None,
-        telegram_chat_id: Optional[str]                  = None,
+        max_drawdown_pct:   float                          = 0.08,
+        on_kill:            Optional[Callable[[str], None]] = None,
+        alert_fn:           Optional[Callable[[str], None]] = None,
+        telegram_token:     Optional[str]                  = None,
+        telegram_chat_id:   Optional[str]                  = None,
+        milestone_manager = None,   # MilestoneManager injected by ZEUS
     ):
         self.max_drawdown_pct  = max_drawdown_pct
         self._on_kill          = on_kill
@@ -57,6 +58,7 @@ class ArgusAgent:
         self._telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
         self._state            = PortfolioState()
         self._ib               = None
+        self._milestone        = milestone_manager
         self.kb = AgentKnowledgeBase("argus")
 
     def health(self) -> AgentHealth:
@@ -69,6 +71,14 @@ class ArgusAgent:
         except Exception as exc:
             logger.warning("[ARGUS] Refresh failed (no IB?): %s", exc)
             return self._state
+
+        # Update milestone — adjusts risk params + fires vault alert if crossed
+        if self._milestone:
+            crossed = self._milestone.update(self._state.total_equity)
+            if crossed:
+                logger.info("[ARGUS] Milestone crossed → %s", crossed.value)
+            # Use milestone's current kill switch threshold (overrides default)
+            self.max_drawdown_pct = self._milestone.config.drawdown_kill_pct
 
         self._check_drawdown()
         self._state.refreshed_at = datetime.now(timezone.utc)
