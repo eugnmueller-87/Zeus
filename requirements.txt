@@ -24,3 +24,7 @@ apscheduler>=3.10
 
 # Environment variable management
 python-dotenv>=1.0
+
+# Quality gate — testing
+pytest>=8.0
+pytest-mock>=3.12
