@@ -35,9 +35,11 @@ def build_zeus() -> ZeusOrchestrator:
     )
     zeus = ZeusOrchestrator(config)
 
-    # Register Hermes RSS feeds from settings
-    for feed_url in settings.get("hermes_feeds", []):
-        zeus.icarus.add_feed(feed_url)
+    # Point Icarus at the live Hermes instance
+    import os
+    zeus.icarus._base_url = settings.get("hermes_base_url", "https://hermes-agent-production-114e.up.railway.app")
+    if not zeus.icarus._api_key:
+        zeus.icarus._api_key = os.getenv("HERMES_API_KEY", "")
 
     return zeus
 

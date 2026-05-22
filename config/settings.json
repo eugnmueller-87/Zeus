@@ -8,10 +8,7 @@
   "ib_host": "127.0.0.1",
   "ib_paper_port": 7497,
   "ib_live_port": 7496,
-  "hermes_feeds": [
-    "https://feeds.reuters.com/reuters/businessNews",
-    "https://feeds.bloomberg.com/markets/news.rss"
-  ],
+  "hermes_base_url": "https://hermes-agent-production-114e.up.railway.app",
   "telegram_bot_token": "",
   "telegram_chat_id": ""
 }

@@ -1,21 +1,27 @@
 """
 Agent 1 — Icarus Signal Watcher
-Monitors Hermes RSS feeds, classifies events, emits structured RawSignal objects.
+Pulls classified signals directly from Hermes (live on Railway).
+No RSS parsing — Hermes already crawls 590+ suppliers across 17 categories
+and classifies every signal via Claude Haiku. Icarus just translates.
+
+Hermes base URL: https://hermes-agent-production-114e.up.railway.app
+Auth: x-api-key header (HERMES_API_KEY env var)
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import uuid
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-import feedparser
+import requests
 
 logger = logging.getLogger("icarus")
+
+HERMES_BASE_URL = "https://hermes-agent-production-114e.up.railway.app"
 
 
 class SignalCategory(Enum):
@@ -45,98 +51,167 @@ class RawSignal:
     severity: Severity
     affected_tickers: list[str] = field(default_factory=list)
     raw_text: str = ""
+    supplier: str = ""          # Hermes supplier name (e.g. "NVIDIA")
+    hermes_signal_type: str = ""
 
 
-# Keywords used for naive classification — replace with LLM call for production
-_DISRUPTION_KEYWORDS = {"recall", "shortage", "strike", "disruption", "halt", "ban", "sanction"}
-_POSITIVE_KEYWORDS = {"record", "beat", "expansion", "partnership", "breakthrough", "approval"}
-_REGULATORY_KEYWORDS = {"sec", "fine", "investigation", "lawsuit", "fdic", "bafin", "antitrust"}
+# Maps Hermes 11 signal types → ZEUS SignalCategory
+_HERMES_TYPE_MAP: dict[str, SignalCategory] = {
+    "SUPPLY_CHAIN":     SignalCategory.SUPPLIER_DISRUPTION,
+    "REGULATORY":       SignalCategory.REGULATORY_ACTION,
+    "EARNINGS":         SignalCategory.EARNINGS_SURPRISE,
+    "PRICING_CHANGE":   SignalCategory.SUPPLIER_DISRUPTION,
+    "LAYOFFS_HIRING":   SignalCategory.MACRO_SHIFT,
+    "ACQUISITION":      SignalCategory.POSITIVE_NEWS,
+    "FUNDING":          SignalCategory.POSITIVE_NEWS,
+    "PRODUCT_RELEASE":  SignalCategory.POSITIVE_NEWS,
+    "PARTNERSHIP":      SignalCategory.POSITIVE_NEWS,
+    "RESEARCH_PAPER":   SignalCategory.NEUTRAL,
+    "OTHER":            SignalCategory.NEUTRAL,
+}
+
+# Hermes urgency → ZEUS Severity
+_URGENCY_MAP: dict[str, Severity] = {
+    "HIGH":   Severity.HIGH,
+    "MEDIUM": Severity.MEDIUM,
+    "LOW":    Severity.LOW,
+}
+
+# Hermes supplier name → likely stock ticker (expand as needed)
+_SUPPLIER_TICKER_MAP: dict[str, str] = {
+    "NVIDIA": "NVDA", "Apple": "AAPL", "Microsoft": "MSFT",
+    "Amazon": "AMZN", "Tesla": "TSLA", "Intel": "INTC",
+    "TSMC": "TSM", "Samsung": "SSNLF", "Qualcomm": "QCOM",
+    "BASF": "BASFY", "Siemens": "SIEGY", "SAP": "SAP",
+    "Deutsche Telekom": "DTEGY", "Volkswagen": "VWAGY",
+    "BMW": "BMWYY", "Mercedes-Benz": "MBGYY",
+}
 
 
-def _classify(text: str) -> tuple[SignalCategory, Severity]:
-    lower = text.lower()
-    if any(k in lower for k in _DISRUPTION_KEYWORDS):
-        return SignalCategory.SUPPLIER_DISRUPTION, Severity.HIGH
-    if any(k in lower for k in _REGULATORY_KEYWORDS):
-        return SignalCategory.REGULATORY_ACTION, Severity.MEDIUM
-    if any(k in lower for k in _POSITIVE_KEYWORDS):
-        return SignalCategory.POSITIVE_NEWS, Severity.MEDIUM
-    return SignalCategory.NEUTRAL, Severity.LOW
+def _map_signal(item: dict) -> Optional[RawSignal]:
+    """Convert one Hermes item dict into a RawSignal. Returns None for neutral/noise."""
+    signal_type = item.get("signal_type", "OTHER")
+    category = _HERMES_TYPE_MAP.get(signal_type, SignalCategory.NEUTRAL)
+    if category == SignalCategory.NEUTRAL:
+        return None
 
+    urgency = item.get("urgency", "LOW")
+    severity = _URGENCY_MAP.get(urgency, Severity.LOW)
 
-def _extract_tickers(text: str) -> list[str]:
-    """
-    Naive all-caps word extraction as a ticker hint.
-    Replace with NER model or financial NLP for production accuracy.
-    """
-    import re
-    candidates = re.findall(r"\b[A-Z]{2,5}\b", text)
-    # Filter out common non-ticker caps words
-    stopwords = {"CEO", "CFO", "USA", "EUR", "USD", "GDP", "ETF", "IPO", "SEC", "FDA", "NATO"}
-    return [c for c in candidates if c not in stopwords]
+    # Bump to CRITICAL if Hermes marked it significant + HIGH urgency
+    if item.get("is_significant") and urgency == "HIGH":
+        severity = Severity.CRITICAL
 
+    supplier = item.get("supplier", "")
+    ticker = _SUPPLIER_TICKER_MAP.get(supplier)
+    tickers = [ticker] if ticker else []
 
-def _entry_id(url: str, title: str) -> str:
-    return hashlib.sha256(f"{url}|{title}".encode()).hexdigest()[:16]
+    try:
+        published_at = datetime.fromisoformat(item["published"].replace("Z", "+00:00"))
+    except Exception:
+        published_at = datetime.utcnow()
+
+    return RawSignal(
+        signal_id=item.get("id", ""),
+        source_url=item.get("url", ""),
+        headline=item.get("title", ""),
+        summary=item.get("summary", ""),
+        published_at=published_at,
+        category=category,
+        severity=severity,
+        affected_tickers=tickers,
+        raw_text=f"{item.get('title', '')} {item.get('summary', '')}",
+        supplier=supplier,
+        hermes_signal_type=signal_type,
+    )
 
 
 class IcarusAgent:
     """
-    Pulls RSS feeds and converts entries into RawSignal objects.
-    Tracks seen entry IDs to avoid duplicate signals across poll cycles.
+    Fetches pre-classified signals from Hermes via HTTP.
+    Uses /briefing for top cross-supplier signals each cycle.
+    Deduplicates by signal ID across poll cycles.
     """
 
-    def __init__(self, feed_urls: list[str] | None = None):
-        self.feed_urls: list[str] = feed_urls or []
+    def __init__(self, api_key: Optional[str] = None, base_url: str = HERMES_BASE_URL):
+        self._api_key = api_key or os.getenv("HERMES_API_KEY", "")
+        self._base_url = base_url.rstrip("/")
         self._seen: set[str] = set()
 
-    def add_feed(self, url: str) -> None:
-        if url not in self.feed_urls:
-            self.feed_urls.append(url)
+        if not self._api_key:
+            logger.warning("[ICARUS] HERMES_API_KEY not set — requests will be rejected.")
+
+    @property
+    def _headers(self) -> dict:
+        return {"x-api-key": self._api_key}
 
     def fetch(self) -> list[RawSignal]:
+        """Main poll — returns new significant signals from Hermes /briefing."""
         signals: list[RawSignal] = []
-        for url in self.feed_urls:
-            try:
-                signals.extend(self._parse_feed(url))
-            except Exception as exc:
-                logger.warning("[ICARUS] Failed to parse feed %s: %s", url, exc)
-        logger.info("[ICARUS] Fetched %d new signal(s) across %d feed(s).", len(signals), len(self.feed_urls))
+        try:
+            signals = self._fetch_briefing()
+        except Exception as exc:
+            logger.error("[ICARUS] Hermes /briefing failed: %s", exc)
+
+        logger.info("[ICARUS] %d new signal(s) from Hermes.", len(signals))
         return signals
 
-    def _parse_feed(self, url: str) -> list[RawSignal]:
-        feed = feedparser.parse(url)
-        results: list[RawSignal] = []
-        for entry in feed.entries:
-            eid = _entry_id(url, entry.get("title", ""))
-            if eid in self._seen:
-                continue
-            self._seen.add(eid)
-
-            title = entry.get("title", "")
-            summary = entry.get("summary", "")
-            full_text = f"{title} {summary}"
-
-            category, severity = _classify(full_text)
-            if category == SignalCategory.NEUTRAL:
-                continue  # skip noise
-
-            published_str = entry.get("published", "")
-            try:
-                published_at = datetime(*entry.published_parsed[:6])
-            except Exception:
-                published_at = datetime.utcnow()
-
-            sig = RawSignal(
-                signal_id=eid,
-                source_url=url,
-                headline=title,
-                summary=summary,
-                published_at=published_at,
-                category=category,
-                severity=severity,
-                affected_tickers=_extract_tickers(full_text),
-                raw_text=full_text,
+    def fetch_company(self, company: str) -> list[RawSignal]:
+        """On-demand pull for a specific supplier by name."""
+        try:
+            resp = requests.get(
+                f"{self._base_url}/query/{company}",
+                headers=self._headers,
+                timeout=15,
             )
-            results.append(sig)
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            return self._parse_items(items)
+        except Exception as exc:
+            logger.error("[ICARUS] Hermes /query/%s failed: %s", company, exc)
+            return []
+
+    def search(self, query: str) -> list[RawSignal]:
+        """Semantic search across all Hermes signals."""
+        try:
+            resp = requests.get(
+                f"{self._base_url}/search",
+                headers=self._headers,
+                params={"q": query},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("results", [])
+            return self._parse_items(items)
+        except Exception as exc:
+            logger.error("[ICARUS] Hermes /search failed: %s", exc)
+            return []
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _fetch_briefing(self) -> list[RawSignal]:
+        resp = requests.get(
+            f"{self._base_url}/briefing",
+            headers=self._headers,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        # /briefing returns {"signals": [...]} or {"items": [...]}
+        items = data.get("signals", data.get("items", []))
+        return self._parse_items(items)
+
+    def _parse_items(self, items: list[dict]) -> list[RawSignal]:
+        results: list[RawSignal] = []
+        for item in items:
+            sid = item.get("id", "")
+            if sid in self._seen:
+                continue
+            self._seen.add(sid)
+
+            sig = _map_signal(item)
+            if sig is not None:
+                results.append(sig)
         return results

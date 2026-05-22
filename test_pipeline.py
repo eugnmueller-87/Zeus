@@ -1,18 +1,22 @@
 """
 Full pipeline smoke test — no IB Gateway required.
-Injects a fake RawSignal and runs it through Hades → Trend → Pattern → MockExecution.
-Run with: python test_pipeline.py
+
+Two modes:
+  python test_pipeline.py           → inject mock signals (no Hermes API key needed)
+  python test_pipeline.py --live    → pull real signals from Hermes (needs HERMES_API_KEY)
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
+import os
 from datetime import datetime
 
 from core.logging_setup import configure_logging
 configure_logging(logging.DEBUG)
 
-from agents.icarus import RawSignal, SignalCategory, Severity
+from agents.icarus import IcarusAgent, RawSignal, SignalCategory, Severity
 from agents.hades import HadesAgent
 from agents.trend import TrendAgent
 from agents.pattern import PatternAgent
@@ -21,11 +25,11 @@ from agents.execution_mock import MockExecutionAgent
 logger = logging.getLogger("test")
 
 
-def make_test_signal(category: SignalCategory, tickers: list[str]) -> RawSignal:
+def make_test_signal(signal_id: str, category: SignalCategory, tickers: list[str], headline: str = "") -> RawSignal:
     return RawSignal(
-        signal_id="test-001",
-        source_url="https://example.com/feed",
-        headline=f"Test signal: {category.value}",
+        signal_id=signal_id,
+        source_url="https://mock",
+        headline=headline or f"Test signal: {category.value}",
         summary="Simulated event for pipeline smoke test.",
         published_at=datetime.utcnow(),
         category=category,
@@ -35,71 +39,96 @@ def make_test_signal(category: SignalCategory, tickers: list[str]) -> RawSignal:
     )
 
 
-def run_test():
-    print("\n" + "="*60)
-    print("  ZEUS Pipeline Smoke Test")
-    print("="*60 + "\n")
-
+def run_pipeline(signals: list[RawSignal], label: str) -> None:
     hades = HadesAgent()
     trend = TrendAgent()
     pattern = PatternAgent()
     execution = MockExecutionAgent()
 
-    # --- Test 1: Clean positive signal (should pass all stages) ---
-    print("[TEST 1] Positive signal on AAPL — expect: PASS all stages\n")
-    raw = make_test_signal(SignalCategory.POSITIVE_NEWS, ["AAPL"])
+    print(f"\n{'='*60}")
+    print(f"  {label}")
+    print(f"  {len(signals)} signal(s) to process")
+    print(f"{'='*60}\n")
 
-    filtered = hades.filter(raw)
-    if filtered is None:
-        print("  FAIL: Hades killed a clean signal.")
-        return
-    print(f"  Hades PASS — compliance_score={filtered.compliance_score:.2f}")
+    for raw in signals:
+        print(f"[SIGNAL] {raw.headline[:80]}")
+        print(f"         supplier={raw.supplier or 'n/a'} category={raw.category.value} tickers={raw.affected_tickers}")
 
-    macro = trend.analyze(filtered)
-    if macro.suppress:
-        print(f"  Trend SUPPRESSED — {macro.suppress_reason}")
-    else:
-        print(f"  Trend PASS — regime={macro.regime} VIX={macro.vix:.1f}")
+        filtered = hades.filter(raw)
+        if filtered is None:
+            print("  → Hades: KILL\n")
+            continue
+        print(f"  → Hades: PASS (compliance={filtered.compliance_score:.2f})")
 
-    sized = pattern.size(filtered, macro)
-    print(f"  Pattern — confidence={sized.confidence:.2f} size={sized.position_size_pct*100:.2f}% skip={sized.skip}")
+        macro = trend.analyze(filtered)
+        if macro.suppress:
+            print(f"  → Trend: SUPPRESS — {macro.suppress_reason}\n")
+            continue
+        print(f"  → Trend: PASS (regime={macro.regime} VIX={macro.vix:.1f})")
 
-    if not sized.skip:
+        sized = pattern.size(filtered, macro)
+        if sized.skip:
+            print(f"  → Pattern: SKIP — {sized.skip_reason}\n")
+            continue
+        print(f"  → Pattern: size={sized.position_size_pct*100:.2f}% confidence={sized.confidence:.2f}")
+
         result = execution.place(sized)
-        print(f"  Execution — {result.side} {result.symbol} @ {result.fill_price} | order_id={result.order_id}")
+        print(f"  → Execution: {result.side} {result.symbol} @ {result.fill_price} | id={result.order_id}")
         pattern.record_trade(sized, result)
+        print()
 
-    # --- Test 2: OFAC-blocked signal ---
-    print("\n[TEST 2] Signal mentioning RUSAL — expect: Hades KILL\n")
-    raw2 = RawSignal(
-        signal_id="test-002",
-        source_url="https://example.com/feed",
-        headline="RUSAL announces production expansion",
-        summary="RUSAL expands aluminium output.",
-        published_at=datetime.utcnow(),
-        category=SignalCategory.POSITIVE_NEWS,
-        severity=Severity.MEDIUM,
-        affected_tickers=["RUAL"],
-        raw_text="RUSAL announces record aluminium production in Q1",
-    )
-    result2 = hades.filter(raw2)
-    print(f"  Hades result: {'KILL (correct)' if result2 is None else 'PASS (unexpected)'}")
 
-    # --- Test 3: Supplier disruption (short signal) ---
-    print("\n[TEST 3] Supplier disruption on TSMC — expect: short trade\n")
-    raw3 = make_test_signal(SignalCategory.SUPPLIER_DISRUPTION, ["TSM"])
-    filtered3 = hades.filter(raw3)
-    if filtered3:
-        macro3 = trend.analyze(filtered3)
-        sized3 = pattern.size(filtered3, macro3)
-        if not sized3.skip and not macro3.suppress:
-            result3 = execution.place(sized3)
-            print(f"  Execution — {result3.side} {result3.symbol} @ {result3.fill_price}")
+def run_mock_tests():
+    signals = [
+        make_test_signal("t-001", SignalCategory.POSITIVE_NEWS, ["AAPL"], "Apple partnership announced"),
+        make_test_signal("t-002", SignalCategory.SUPPLIER_DISRUPTION, ["TSM"], "TSMC fab disruption reported"),
+        RawSignal(
+            signal_id="t-003",
+            source_url="https://mock",
+            headline="RUSAL announces production expansion",
+            summary="RUSAL expands aluminium output.",
+            published_at=datetime.utcnow(),
+            category=SignalCategory.POSITIVE_NEWS,
+            severity=Severity.MEDIUM,
+            affected_tickers=["RUAL"],
+            raw_text="RUSAL announces record aluminium production",
+        ),
+        make_test_signal("t-004", SignalCategory.EARNINGS_SURPRISE, ["NVDA"], "NVIDIA beats earnings by 40%"),
+        make_test_signal("t-005", SignalCategory.REGULATORY_ACTION, ["MSFT"], "Microsoft antitrust investigation opened"),
+    ]
+    run_pipeline(signals, "Mock Signal Tests")
 
-    print("\n" + "="*60)
-    print("  Smoke test complete. Check logs above for details.")
-    print("="*60 + "\n")
+
+def run_live_hermes():
+    api_key = os.getenv("HERMES_API_KEY", "")
+    if not api_key:
+        print("ERROR: HERMES_API_KEY not set. Run: set HERMES_API_KEY=your_key")
+        return
+
+    print("Fetching live signals from Hermes...")
+    icarus = IcarusAgent(api_key=api_key)
+    signals = icarus.fetch()
+
+    if not signals:
+        print("No significant signals returned by Hermes /briefing right now.")
+        print("Try --company NVIDIA to query a specific supplier.")
+        return
+
+    run_pipeline(signals, "Live Hermes Signals")
 
 
 if __name__ == "__main__":
-    run_test()
+    parser = argparse.ArgumentParser(description="ZEUS Pipeline Smoke Test")
+    parser.add_argument("--live", action="store_true", help="Pull real signals from Hermes")
+    parser.add_argument("--company", type=str, help="Query a specific Hermes supplier (e.g. NVIDIA)")
+    args = parser.parse_args()
+
+    if args.company:
+        api_key = os.getenv("HERMES_API_KEY", "")
+        icarus = IcarusAgent(api_key=api_key)
+        signals = icarus.fetch_company(args.company)
+        run_pipeline(signals, f"Hermes signals for: {args.company}")
+    elif args.live:
+        run_live_hermes()
+    else:
+        run_mock_tests()

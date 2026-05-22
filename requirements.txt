@@ -1,9 +1,6 @@
 # ZEUS — Python dependencies
 # Install: pip install -r requirements.txt
 
-# RSS feed parsing
-feedparser>=6.0
-
 # Market data
 yfinance>=0.2
 
@@ -13,7 +10,7 @@ ib_insync>=0.9.86
 # Vector DB for pattern learning (Phase 2)
 chromadb>=0.4
 
-# HTTP requests (Telegram alerts)
+# HTTP requests (Hermes API + Telegram alerts)
 requests>=2.31
 
 # Scheduling (standalone mode fallback)
