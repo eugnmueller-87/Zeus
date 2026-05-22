@@ -58,7 +58,7 @@ export default function DrawdownMeter({ status, events }) {
       </div>
 
       <div style={styles.circuitSection}>
-        <div style={styles.label} style={{ ...styles.label, marginBottom: 6 }}>CIRCUIT BREAKERS</div>
+        <div style={{ ...styles.label, marginBottom: 6 }}>CIRCUIT BREAKERS</div>
         <div style={styles.cbGrid}>
           {status?.circuit_breakers
             ? Object.entries(status.circuit_breakers).map(([agent, state]) => (

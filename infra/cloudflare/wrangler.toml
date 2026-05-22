@@ -1,0 +1,12 @@
+# Pantheon OS — Cloudflare Pages config
+# Deploy: wrangler pages deploy dashboard/frontend/dist --project-name pantheon-dashboard
+
+name = "pantheon-dashboard"
+compatibility_date = "2024-01-01"
+
+[env.production]
+# Set these in Cloudflare Pages dashboard → Settings → Environment variables:
+# VITE_SUPABASE_URL      = https://YOUR_PROJECT.supabase.co
+# VITE_SUPABASE_ANON_KEY = your_anon_key
+# VITE_WS_URL            = wss://YOUR_DOMAIN/ws
+# VITE_API_URL           = https://YOUR_DOMAIN/api

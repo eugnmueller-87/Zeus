@@ -1,0 +1,4 @@
+# Cloudflare Pages — SPA fallback routing
+/api/*  https://YOUR_DOMAIN/api/:splat  200
+/ws     https://YOUR_DOMAIN/ws          200
+/*      /index.html                     200

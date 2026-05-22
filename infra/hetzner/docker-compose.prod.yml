@@ -1,0 +1,93 @@
+version: "3.9"
+
+# Pantheon OS — Production Docker Compose (Hetzner CX21)
+# Frankfurt DC, 2 vCPU, 4 GB RAM
+#
+# Deploy:
+#   scp this file + .env to server, then:
+#   docker compose -f docker-compose.prod.yml up -d
+
+services:
+
+  # ── ZEUS Webhook Server ─────────────────────────────────────
+  zeus:
+    image: ghcr.io/eugnmueller-87/pantheon:latest
+    container_name: pantheon_zeus
+    restart: always
+    command: python main.py --port 8080
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      - TZ=Europe/Berlin
+    volumes:
+      - zeus_knowledge:/app/knowledge    # agent skills .md files (read-only at runtime)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      - redis
+    networks:
+      - pantheon
+
+  # ── Dashboard Backend ───────────────────────────────────────
+  dashboard:
+    image: ghcr.io/eugnmueller-87/pantheon:latest
+    container_name: pantheon_dashboard
+    restart: always
+    command: python -m uvicorn dashboard.backend.server:app --host 0.0.0.0 --port 8081
+    ports:
+      - "8081:8081"
+    env_file: .env
+    environment:
+      - TZ=Europe/Berlin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - pantheon
+
+  # ── Redis (Upstash bridge cache — local fallback) ───────────
+  # NOTE: Production uses Upstash Redis (cloud). This is a local
+  # fallback for development on the server only.
+  redis:
+    image: redis:7-alpine
+    container_name: pantheon_redis
+    restart: always
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - pantheon
+
+  # ── Nginx reverse proxy ─────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: pantheon_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro        # Certbot SSL certs
+      - /var/www/certbot:/var/www/certbot:ro
+    depends_on:
+      - zeus
+      - dashboard
+    networks:
+      - pantheon
+
+volumes:
+  zeus_knowledge:
+  redis_data:
+
+networks:
+  pantheon:
+    driver: bridge
