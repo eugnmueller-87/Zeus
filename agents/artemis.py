@@ -1,6 +1,7 @@
 """
-Agent 3 — Trend Analyzer
-Macro context: VIX, market regime, sector momentum.
+Agent 3 — Artemis: Macro Context & Regime Detection
+Goddess of the hunt — tracks macro conditions, spots the right moment.
+VIX, market regime, sector ETF momentum.
 Imports only from core.types — never from other agents.
 """
 
@@ -15,7 +16,7 @@ import yfinance as yf
 from core.types import AgentHealth, FilteredSignal, MacroContext, MarketRegime
 from core.agent_knowledge import AgentKnowledgeBase
 
-logger = logging.getLogger("trend")
+logger = logging.getLogger("artemis")
 
 _VIX_HIGH    = 25.0
 _VIX_EXTREME = 35.0
@@ -23,12 +24,12 @@ _BULL_THRESH =  0.02
 _BEAR_THRESH = -0.03
 
 
-class TrendAgent:
+class ArtemisAgent:
     def __init__(self, cache_ttl_seconds: int = 900):
         self._cache_ttl = cache_ttl_seconds
         self._cached:    Optional[MacroContext] = None
         self._cache_time: Optional[datetime]   = None
-        self.kb = AgentKnowledgeBase("trend")
+        self.kb = AgentKnowledgeBase("artemis")
 
     def health(self) -> AgentHealth:
         try:
@@ -56,7 +57,7 @@ class TrendAgent:
         sp500_return = self._fetch_sp500_return()
         regime       = self._classify_regime(sp500_return, vix)
         sectors      = self._fetch_sector_momentum()
-        logger.info("[TREND] regime=%s VIX=%.2f SP500_1m=%.2f%%", regime, vix, sp500_return * 100)
+        logger.info("[ARTEMIS] regime=%s VIX=%.2f SP500_1m=%.2f%%", regime, vix, sp500_return * 100)
         return MacroContext(
             fetched_at      = datetime.now(timezone.utc),
             regime          = regime,
@@ -71,7 +72,7 @@ class TrendAgent:
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
         except Exception as exc:
-            logger.warning("[TREND] VIX fetch failed: %s", exc)
+            logger.warning("[ARTEMIS] VIX fetch failed: %s", exc)
         return 20.0
 
     def _fetch_sp500_return(self) -> float:
@@ -80,7 +81,7 @@ class TrendAgent:
             if len(hist) >= 2:
                 return (float(hist["Close"].iloc[-1]) - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0])
         except Exception as exc:
-            logger.warning("[TREND] SPY fetch failed: %s", exc)
+            logger.warning("[ARTEMIS] SPY fetch failed: %s", exc)
         return 0.0
 
     def _fetch_sector_momentum(self) -> dict[str, float]:

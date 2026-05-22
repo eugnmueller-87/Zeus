@@ -1,6 +1,6 @@
 """
-Agent 5 (Mock) — Execution Agent (no IB required)
-Drop-in replacement for ExecutionAgent during testing.
+Agent 5 (Mock) — Ares Mock: Trade Execution (no IB required)
+Drop-in replacement for AresAgent during testing.
 Imports only from core.types — never from other agents.
 """
 
@@ -16,17 +16,17 @@ import yfinance as yf
 from core.types import AgentHealth, SignalCategory, SizedSignal, TradeResult
 from core.agent_knowledge import AgentKnowledgeBase
 
-logger = logging.getLogger("execution.mock")
+logger = logging.getLogger("ares.mock")
 
 _ACCOUNT_EQUITY = 100_000.0
 
 
-class MockExecutionAgent:
+class AresMockAgent:
     def __init__(self, slippage_bps: int = 5):
         self.slippage_bps = slippage_bps
         self._pending: list[str] = []
-        self.kb = AgentKnowledgeBase("execution")   # shares execution skills with live agent
-        logger.info("[EXECUTION-MOCK] Initialised — no IB connection required.")
+        self.kb = AgentKnowledgeBase("ares")   # shares Ares skills with live agent
+        logger.info("[ARES-MOCK] Initialised — no IB connection required.")
 
     def health(self) -> AgentHealth:
         return AgentHealth.HEALTHY
@@ -50,7 +50,7 @@ class MockExecutionAgent:
         order_id    = str(uuid.uuid4())[:8]
 
         self._pending.append(order_id)
-        logger.info("[EXECUTION-MOCK] SIMULATED %s %d %s @ %.4f | SL=%.4f TP=%.4f | id=%s",
+        logger.info("[ARES-MOCK] SIMULATED %s %d %s @ %.4f | SL=%.4f TP=%.4f | id=%s",
                     side, qty, symbol, fill_price, stop_price, limit_price, order_id)
 
         return TradeResult(
@@ -61,7 +61,7 @@ class MockExecutionAgent:
         )
 
     def cancel_all_pending(self) -> None:
-        logger.info("[EXECUTION-MOCK] Cancelled %d pending orders.", len(self._pending))
+        logger.info("[ARES-MOCK] Cancelled %d pending orders.", len(self._pending))
         self._pending.clear()
 
     def _get_price(self, symbol: str) -> Optional[float]:
@@ -70,7 +70,7 @@ class MockExecutionAgent:
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
         except Exception as exc:
-            logger.warning("[EXECUTION-MOCK] Price fetch failed for %s: %s", symbol, exc)
+            logger.warning("[ARES-MOCK] Price fetch failed for %s: %s", symbol, exc)
         return None
 
     @staticmethod

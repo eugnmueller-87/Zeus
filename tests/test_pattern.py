@@ -16,7 +16,8 @@ from core.types import (
     FilteredSignal, MacroContext, MarketRegime,
     RawSignal, Severity, SignalCategory, SizedSignal, TradeResult,
 )
-from agents.pattern import PatternAgent
+from agents.pythia import PythiaAgent
+from agents.pythia import PythiaAgent as PatternAgent
 
 
 @pytest.fixture
@@ -213,14 +214,14 @@ class TestSQLiteRoundTrip:
 
 class TestVixBand:
     def test_bands(self):
-        assert PatternAgent._vix_band(10.0) == "low"
-        assert PatternAgent._vix_band(14.9) == "low"
-        assert PatternAgent._vix_band(15.0) == "medium"
-        assert PatternAgent._vix_band(24.9) == "medium"
-        assert PatternAgent._vix_band(25.0) == "high"
-        assert PatternAgent._vix_band(34.9) == "high"
-        assert PatternAgent._vix_band(35.0) == "extreme"
-        assert PatternAgent._vix_band(50.0) == "extreme"
+        assert PythiaAgent._vix_band(10.0) == "low"
+        assert PythiaAgent._vix_band(14.9) == "low"
+        assert PythiaAgent._vix_band(15.0) == "medium"
+        assert PythiaAgent._vix_band(24.9) == "medium"
+        assert PythiaAgent._vix_band(25.0) == "high"
+        assert PythiaAgent._vix_band(34.9) == "high"
+        assert PythiaAgent._vix_band(35.0) == "extreme"
+        assert PythiaAgent._vix_band(50.0) == "extreme"
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

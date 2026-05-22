@@ -36,11 +36,11 @@ from core.redis_bridge import RedisBridge
 
 from agents.icarus import IcarusAgent
 from agents.hades import HadesAgent
-from agents.trend import TrendAgent
-from agents.pattern import PatternAgent
-from agents.execution import ExecutionAgent
-from agents.execution_mock import MockExecutionAgent
-from agents.monitor import MonitorAgent
+from agents.artemis import ArtemisAgent
+from agents.pythia import PythiaAgent
+from agents.ares import AresAgent
+from agents.ares_mock import AresMockAgent
+from agents.argus import ArgusAgent
 from agents.apollo import ApolloAgent
 
 logger = logging.getLogger("zeus")
@@ -98,10 +98,10 @@ class ZeusOrchestrator:
         # Agents — ZEUS holds the only references
         self.icarus    = IcarusAgent()
         self.hades     = HadesAgent()
-        self.trend     = TrendAgent()
-        self.pattern   = PatternAgent()
-        self.execution = MockExecutionAgent() if self.config.mock_execution else ExecutionAgent(paper=self.config.paper_trading)
-        self.monitor   = MonitorAgent(
+        self.artemis   = ArtemisAgent()
+        self.pythia    = PythiaAgent()
+        self.ares      = AresMockAgent() if self.config.mock_execution else AresAgent(paper=self.config.paper_trading)
+        self.argus     = ArgusAgent(
             max_drawdown_pct=self.config.max_portfolio_drawdown_pct,
             on_kill=self._emergency_halt,
             alert_fn=self._send_alert,
@@ -141,7 +141,7 @@ class ZeusOrchestrator:
             run = self._process_signal(sig)
             runs.append(run)
 
-        self.cb.call("monitor", fn=self.monitor.refresh, fallback=None)
+        self.cb.call("argus", fn=self.argus.refresh, fallback=None)
         return runs
 
     def run_research_cycle(self) -> dict:
@@ -151,7 +151,7 @@ class ZeusOrchestrator:
     def halt(self, reason: str = "manual") -> None:
         self.status = PipelineStatus.HALTED
         try:
-            self.execution.cancel_all_pending()
+            self.ares.cancel_all_pending()
         except Exception:
             pass
         self._send_alert(f"ZEUS HALTED — {reason}")
@@ -201,8 +201,8 @@ class ZeusOrchestrator:
 
         # Stage 2 — Trend macro context
         macro: MacroContext = self.cb.call(
-            "trend",
-            fn=lambda: self.trend.analyze(filtered),
+            "artemis",
+            fn=lambda: self.artemis.analyze(filtered),
             fallback=MacroContext(
                 fetched_at=datetime.now(timezone.utc),
                 regime=MarketRegime.UNKNOWN,
@@ -218,14 +218,14 @@ class ZeusOrchestrator:
             trace.killed_at_stage = "trend"
             trace.kill_reason     = macro.suppress_reason or "macro suppression"
             self._write_trace(trace)
-            return run.kill("trend", trace.kill_reason)
+            return run.kill("artemis", trace.kill_reason)
         run.macro_context = macro
         self.bridge.push_macro(macro)              # → SpendLens category strategy
 
         # Stage 3 — Pattern sizing
         sized: SizedSignal = self.cb.call(
-            "pattern",
-            fn=lambda: self.pattern.size(filtered, macro),
+            "pythia",
+            fn=lambda: self.pythia.size(filtered, macro),
             fallback=SizedSignal(
                 original=filtered, macro=macro,
                 confidence=0.5, position_size_pct=0.01,
@@ -238,7 +238,7 @@ class ZeusOrchestrator:
             trace.killed_at_stage = "pattern"
             trace.kill_reason     = sized.skip_reason or "low confidence"
             self._write_trace(trace)
-            return run.kill("pattern", trace.kill_reason)
+            return run.kill("pythia", trace.kill_reason)
         run.sized_signal = sized
 
         # Stage 4 — ZEUS LLM reasoning + KB query (the final judge)
@@ -257,7 +257,7 @@ class ZeusOrchestrator:
             return run.kill("zeus", trace.kill_reason)
 
         # Stage 5 — Portfolio headroom check
-        if self.monitor.open_position_count() >= self.config.max_open_positions:
+        if self.argus.open_position_count() >= self.config.max_open_positions:
             trace.killed_at_stage = "zeus"
             trace.kill_reason     = "max open positions reached"
             self._write_trace(trace)
@@ -265,8 +265,8 @@ class ZeusOrchestrator:
 
         # Stage 6 — Execute
         result: TradeResult = self.cb.call(
-            "execution",
-            fn=lambda: self.execution.place(sized),
+            "ares",
+            fn=lambda: self.ares.place(sized),
             fallback=TradeResult(
                 order_id="failed", symbol="", side="", fill_price=None, qty=0, status="circuit_open"
             ),
@@ -279,7 +279,7 @@ class ZeusOrchestrator:
         trace.fill_price   = result.fill_price
 
         # Feed outcome back to Pattern + KB
-        self.cb.call("pattern", fn=lambda: self.pattern.record_trade(sized, result), fallback=None)
+        self.cb.call("pythia", fn=lambda: self.pythia.record_trade(sized, result), fallback=None)
         self._write_trace(trace)
         run.trace = trace
 
@@ -418,16 +418,16 @@ Respond in this exact JSON format:
 
     def _send_alert(self, message: str) -> None:
         try:
-            self.monitor.send_alert(message)
+            self.argus.send_alert(message)
         except Exception:
             logger.warning("[ZEUS] Alert delivery failed: %s", message)
 
     def _register_watchdog(self) -> None:
-        self.watchdog.register("zeus",      self.health)
-        self.watchdog.register("icarus",    self.icarus.health)
-        self.watchdog.register("hades",     self.hades.health)
-        self.watchdog.register("trend",     self.trend.health)
-        self.watchdog.register("pattern",   self.pattern.health)
-        self.watchdog.register("execution", self.execution.health)
-        self.watchdog.register("monitor",   self.monitor.health)
-        self.watchdog.register("apollo",    self.apollo.health)
+        self.watchdog.register("zeus",    self.health)
+        self.watchdog.register("icarus",  self.icarus.health)
+        self.watchdog.register("hades",   self.hades.health)
+        self.watchdog.register("artemis", self.artemis.health)
+        self.watchdog.register("pythia",  self.pythia.health)
+        self.watchdog.register("ares",    self.ares.health)
+        self.watchdog.register("argus",   self.argus.health)
+        self.watchdog.register("apollo",  self.apollo.health)

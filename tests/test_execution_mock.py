@@ -15,7 +15,7 @@ from core.types import (
     FilteredSignal, MacroContext, MarketRegime,
     RawSignal, Severity, SignalCategory, SizedSignal,
 )
-from agents.execution_mock import MockExecutionAgent, _ACCOUNT_EQUITY
+from agents.ares_mock import AresMockAgent as MockExecutionAgent, _ACCOUNT_EQUITY
 
 
 def _filtered(category=SignalCategory.POSITIVE_NEWS, tickers=None) -> FilteredSignal:

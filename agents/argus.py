@@ -1,5 +1,6 @@
 """
-Agent 6 — Portfolio Monitor + Reporting
+Agent 6 — Argus: Portfolio Monitor & Kill Switch
+The hundred-eyed giant — watches everything, never sleeps.
 Drawdown tracking, kill switch, Telegram alerts, outcome backfill.
 Imports only from core.types — never from other agents.
 """
@@ -17,7 +18,7 @@ import requests
 from core.types import AgentHealth
 from core.agent_knowledge import AgentKnowledgeBase
 
-logger = logging.getLogger("monitor")
+logger = logging.getLogger("argus")
 
 
 @dataclass
@@ -40,7 +41,7 @@ class PortfolioState:
     refreshed_at:        Optional[datetime]     = None
 
 
-class MonitorAgent:
+class ArgusAgent:
     def __init__(
         self,
         max_drawdown_pct: float                          = 0.08,
@@ -56,7 +57,7 @@ class MonitorAgent:
         self._telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
         self._state            = PortfolioState()
         self._ib               = None
-        self.kb = AgentKnowledgeBase("monitor")
+        self.kb = AgentKnowledgeBase("argus")
 
     def health(self) -> AgentHealth:
         return AgentHealth.HEALTHY
@@ -66,12 +67,12 @@ class MonitorAgent:
             ib           = self._get_connection()
             self._state  = self._build_state(ib)
         except Exception as exc:
-            logger.warning("[MONITOR] Refresh failed (no IB?): %s", exc)
+            logger.warning("[ARGUS] Refresh failed (no IB?): %s", exc)
             return self._state
 
         self._check_drawdown()
         self._state.refreshed_at = datetime.now(timezone.utc)
-        logger.info("[MONITOR] equity=%.2f drawdown=%.2f%% positions=%d",
+        logger.info("[ARGUS] equity=%.2f drawdown=%.2f%% positions=%d",
                     self._state.total_equity,
                     self._state.current_drawdown_pct * 100,
                     len(self._state.snapshots))
@@ -96,9 +97,9 @@ class MonitorAgent:
                     timeout=5,
                 )
             except Exception as exc:
-                logger.warning("[MONITOR] Telegram failed: %s", exc)
+                logger.warning("[ARGUS] Telegram failed: %s", exc)
         else:
-            logger.info("[MONITOR] Alert (no Telegram): %s", message)
+            logger.info("[ARGUS] Alert (no Telegram): %s", message)
 
     def _build_state(self, ib) -> PortfolioState:
         equity = 100_000.0
@@ -135,7 +136,7 @@ class MonitorAgent:
             msg = (f"ZEUS EMERGENCY HALT\n"
                    f"Drawdown {dd*100:.1f}% >= limit {self.max_drawdown_pct*100:.1f}%\n"
                    f"All trading suspended.")
-            logger.critical("[MONITOR] %s", msg)
+            logger.critical("[ARGUS] %s", msg)
             self.send_alert(msg)
             if self._on_kill:
                 self._on_kill(f"drawdown {dd*100:.1f}%")

@@ -1,4 +1,4 @@
-# ZEUS — Autonomous Trading Orchestrator
+# Pantheon OS — Autonomous Trading Orchestrator
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
@@ -10,7 +10,7 @@
 ![ChromaDB](https://img.shields.io/badge/KB-ChromaDB-FF6B35?style=flat)
 ![Redis](https://img.shields.io/badge/Bridge-Upstash%20Redis-DC382D?style=flat&logo=redis&logoColor=white)
 
-> **7-agent autonomous trading system for German markets. ZEUS is the supreme orchestrator — all agents report to it. Zero babysitting once deployed.**
+> **8-agent autonomous trading system for German markets. Eight gods, one mission. ZEUS is the supreme orchestrator — all agents report to it. Zero babysitting once deployed.**
 
 ---
 
@@ -19,20 +19,20 @@
 ```
   Hermes (live Railway API — 590+ suppliers)
         ↓
-  [1] Icarus — Signal Watcher
+  [1] Icarus  — Signal Watcher
         ↓  RawSignal
-  [2] Hades — Compliance Filter        ← OFAC · EU sanctions · ESG · LkSG
+  [2] Hades   — Compliance Filter      ← OFAC · EU sanctions · ESG · LkSG
         ↓  FilteredSignal (or KILL)
-  [3] Trend Analyzer                   ← VIX · S&P500 regime · sector ETFs
+  [3] Artemis — Macro Context          ← VIX · S&P500 regime · sector ETFs
         ↓  MacroContext (or SUPPRESS)
-  [4] Pattern Learner                  ← SQLite hit rates → Kelly-sized positions
+  [4] Pythia  — Pattern & Sizing       ← SQLite hit rates → Kelly-sized positions
         ↓  SizedSignal (or SKIP)
-  [5] ZEUS LLM Reasoning               ← Claude Haiku · ChromaDB KB · past decisions
+  [5] ZEUS    — LLM Reasoning          ← Claude Haiku · ChromaDB KB · past decisions
         ↓  approved / resized / rejected
-  [6] Execution Agent                  ← IBKR bracket order (entry + SL + TP)
+  [6] Ares    — Trade Execution        ← IBKR bracket order (entry + SL + TP)
         ↓  TradeResult
-  [7] Monitor                          ← drawdown kill switch · Telegram alerts
-        ↓  outcome → Pattern + KB (feedback loop)
+  [7] Argus   — Portfolio Monitor      ← drawdown kill switch · Telegram alerts
+        ↓  outcome → Pythia + KB (feedback loop)
 
   [Apollo] — Daily research cycle (runs parallel, not in signal path)
      ├── arXiv q-fin paper ingestion → ChromaDB
@@ -52,15 +52,15 @@
 
 ## Agents
 
-| # | Agent | Role |
-|---|---|---|
-| 1 | **Icarus** | Monitors the live Hermes API (590+ suppliers on Railway). Classifies events by category and severity. Deduplicates across cycles. Emits structured `RawSignal` objects. |
-| 2 | **Hades** | Compliance firewall. OFAC sanctions, EU sanctions (BaFin/Reg 833/2014), ESG sector flags, LkSG violations, blocked tickers → hard kill or severity downgrade. Full audit trail. |
-| 3 | **Trend** | Fetches VIX, S&P 500 1-month return, and 6 sector ETFs via yfinance. Classifies market regime (bull/bear/sideways). Suppresses signals that conflict with macro environment. 15-min cache. |
-| 4 | **Pattern** | Learning agent. Every signal → outcome stored in SQLite. Derives position size from historical hit rates per `{category}×{regime}×{VIX band}`. Kelly-inspired sizing (capped at 5%). Requires 10+ samples before trusting learned stats. |
-| 5 | **Execution** | Places bracket orders on Interactive Brokers via `ib_insync`. Entry + 3% stop-loss + 6% take-profit. XETRA-aware (EUR-denominated). Paper port 7497 / live port 7496. |
-| 6 | **Monitor** | Tracks portfolio equity and drawdown in real time from IB. Emergency halt + Telegram alert if drawdown ≥ 8%. Backfills closed-trade P&L into Pattern and ChromaDB. |
-| 7 | **Apollo** | Research & knowledge agent. Runs daily: ingests arXiv q-fin papers, crawls Hermes for earnings transcripts, maintains the live supplier→ticker map, and runs the self-improvement loop — analysing decision traces and writing insights back into ZEUS's knowledge base. |
+| # | Agent | Mythology | Role |
+|---|---|---|---|
+| 1 | **Icarus** | Flies closest to the sun — first to see market signals | Monitors the live Hermes API (590+ suppliers). Classifies events by category and severity. Deduplicates across poll cycles. |
+| 2 | **Hades** | Lord of the underworld — judges who passes | Compliance firewall. OFAC, EU sanctions (BaFin/Reg 833/2014), ESG sector flags, LkSG violations → hard kill or severity downgrade. Full audit trail. |
+| 3 | **Artemis** | Goddess of the hunt — tracks conditions, picks the moment | Fetches VIX, S&P 500 1-month return, and 6 sector ETFs. Classifies market regime (bull/bear/sideways). Suppresses signals that conflict with macro environment. 15-min cache. |
+| 4 | **Pythia** | Oracle of Delphi — reads patterns, predicts outcomes | Learning agent. Every signal → outcome in SQLite. Derives position size from historical hit rates per `{category}×{regime}×{VIX band}`. Kelly-inspired sizing (capped at 5%). |
+| 5 | **Ares** | God of decisive action — executes the strike | Places bracket orders on Interactive Brokers via `ib_insync`. Entry + 3% stop-loss + 6% take-profit. XETRA-aware. Paper port 7497 / live port 7496. |
+| 6 | **Argus** | Hundred-eyed giant — watches everything, never sleeps | Tracks portfolio equity and drawdown in real time. Emergency halt + Telegram alert if drawdown ≥ 8%. Backfills closed-trade P&L into Pythia and ChromaDB. |
+| 7 | **Apollo** | God of knowledge and truth — the librarian | Runs daily: ingests arXiv q-fin papers, crawls Hermes for earnings transcripts, maintains the live supplier→ticker map, runs the self-improvement loop. |
 
 ---
 
@@ -182,14 +182,14 @@ ZEUS/
 ├── docker-compose.yml           # n8n
 ├── agents/
 │   ├── zeus.py                  # Supreme orchestrator — owns the pipeline
-│   ├── icarus.py                # Hermes signal watcher
-│   ├── hades.py                 # Compliance filter (OFAC, ESG, EU sanctions)
-│   ├── trend.py                 # Macro context (VIX, regime, sector momentum)
-│   ├── pattern.py               # Learning agent — Kelly-sized positions
-│   ├── execution.py             # IBKR live/paper execution
-│   ├── execution_mock.py        # Mock execution (no IB needed)
-│   ├── monitor.py               # Drawdown kill switch + Telegram alerts
-│   └── apollo.py                # Research agent — KB seeding + self-improvement
+│   ├── icarus.py                # Signal watcher — Hermes API
+│   ├── hades.py                 # Compliance filter — OFAC, ESG, EU sanctions
+│   ├── artemis.py               # Macro context — VIX, regime, sector momentum
+│   ├── pythia.py                # Pattern learning — Kelly-sized positions
+│   ├── ares.py                  # Trade execution — IBKR live/paper
+│   ├── ares_mock.py             # Mock execution — no IB needed
+│   ├── argus.py                 # Portfolio monitor — drawdown kill switch
+│   └── apollo.py                # Research — KB seeding + self-improvement
 ├── core/
 │   ├── types.py                 # Single source of truth for all data contracts
 │   ├── knowledge_base.py        # ChromaDB wrapper (shared KB)
@@ -207,10 +207,10 @@ ZEUS/
 │   └── agents/
 │       ├── icarus_skills.md
 │       ├── hades_skills.md
-│       ├── trend_skills.md
-│       ├── pattern_skills.md
-│       ├── execution_skills.md
-│       ├── monitor_skills.md
+│       ├── artemis_skills.md
+│       ├── pythia_skills.md
+│       ├── ares_skills.md
+│       ├── argus_skills.md
 │       ├── zeus_skills.md
 │       └── apollo_skills.md
 ├── config/

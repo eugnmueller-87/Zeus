@@ -124,11 +124,11 @@ class ZeusHandler(BaseHTTPRequestHandler):
         self._json_response(200, {"status": "running"})
 
     def _handle_status(self):
-        state = _zeus.monitor._state
+        state = _zeus.argus._state
         cb_status = _zeus.cb.status()
         self._json_response(200, {
             "pipeline_status":  _zeus.status.value,
-            "open_positions":   _zeus.monitor.open_position_count(),
+            "open_positions":   _zeus.argus.open_position_count(),
             "equity":           state.total_equity,
             "drawdown_pct":     round(state.current_drawdown_pct * 100, 2),
             "paper_trading":    _zeus.config.paper_trading,

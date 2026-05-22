@@ -1,5 +1,6 @@
 """
-Agent 4 — Pattern Learning Agent
+Agent 4 — Pythia: Pattern Learning & Position Sizing
+The Oracle of Delphi — reads patterns, predicts outcomes.
 SQLite trade log + Kelly-inspired sizing.
 Imports only from core.types — never from other agents.
 """
@@ -19,7 +20,7 @@ from core.types import (
 )
 from core.agent_knowledge import AgentKnowledgeBase
 
-logger = logging.getLogger("pattern")
+logger = logging.getLogger("pythia")
 
 DB_PATH              = Path("data/trade_log.db")
 _MIN_SAMPLES         = 10
@@ -27,12 +28,12 @@ _DEFAULT_SIZE_PCT    = 0.02
 _MIN_CONFIDENCE      = 0.45
 
 
-class PatternAgent:
+class PythiaAgent:
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
-        self.kb = AgentKnowledgeBase("pattern")
+        self.kb = AgentKnowledgeBase("pythia")
 
     def health(self) -> AgentHealth:
         try:
@@ -53,7 +54,7 @@ class PatternAgent:
             confidence   = stats["hit_rate"]
             edge         = max(0.0, confidence - 0.5) * 2
             position_pct = min(0.05, _DEFAULT_SIZE_PCT + edge * 0.03)
-            logger.info("[PATTERN] key=%s n=%d hit_rate=%.2f size=%.2f%%",
+            logger.info("[PYTHIA] key=%s n=%d hit_rate=%.2f size=%.2f%%",
                         key, stats["n"], confidence, position_pct * 100)
 
         skip = confidence < _MIN_CONFIDENCE
@@ -89,7 +90,7 @@ class PatternAgent:
     @staticmethod
     def _context_key(signal: FilteredSignal, macro: MacroContext) -> str:
         regime   = macro.regime.value if hasattr(macro.regime, "value") else str(macro.regime)
-        vix_band = PatternAgent._vix_band(macro.vix)
+        vix_band = PythiaAgent._vix_band(macro.vix)
         return f"{signal.category.value}|{regime}|{vix_band}"
 
     @staticmethod

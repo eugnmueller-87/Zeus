@@ -15,7 +15,7 @@ from core.types import (
     FilteredSignal, MacroContext, MarketRegime,
     RawSignal, Severity, SignalCategory,
 )
-from agents.trend import TrendAgent
+from agents.artemis import ArtemisAgent as TrendAgent
 
 
 def _filtered(category=SignalCategory.POSITIVE_NEWS) -> FilteredSignal:

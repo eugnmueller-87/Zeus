@@ -1,5 +1,6 @@
 """
-Agent 5 — Execution Agent (Interactive Brokers)
+Agent 5 — Ares: Trade Execution (Interactive Brokers)
+God of decisive action — executes the strike.
 Places bracket orders via ib_insync.
 Imports only from core.types — never from other agents.
 """
@@ -13,10 +14,10 @@ from typing import Optional
 from core.types import AgentHealth, SignalCategory, SizedSignal, TradeResult
 from core.agent_knowledge import AgentKnowledgeBase
 
-logger = logging.getLogger("execution")
+logger = logging.getLogger("ares")
 
 
-class ExecutionAgent:
+class AresAgent:
     IB_PAPER_PORT = 7497
     IB_LIVE_PORT  = 7496
 
@@ -26,8 +27,8 @@ class ExecutionAgent:
         self.port  = self.IB_PAPER_PORT if paper else self.IB_LIVE_PORT
         self._ib   = None
         self._pending: list[str] = []
-        self.kb = AgentKnowledgeBase("execution")
-        logger.info("[EXECUTION] %s mode — port %d", "PAPER" if paper else "LIVE", self.port)
+        self.kb = AgentKnowledgeBase("ares")
+        logger.info("[ARES] %s mode — port %d", "PAPER" if paper else "LIVE", self.port)
 
     def health(self) -> AgentHealth:
         try:
@@ -38,7 +39,7 @@ class ExecutionAgent:
 
     def place(self, sized: SizedSignal) -> TradeResult:
         if not sized.affected_tickers:
-            logger.warning("[EXECUTION] No tickers in signal %s", sized.signal_id)
+            logger.warning("[ARES] No tickers in signal %s", sized.signal_id)
             return self._null_result()
         try:
             ib     = self._get_connection()
@@ -46,7 +47,7 @@ class ExecutionAgent:
             self._pending.append(result.order_id)
             return result
         except Exception as exc:
-            logger.error("[EXECUTION] Order failed: %s", exc)
+            logger.error("[ARES] Order failed: %s", exc)
             return self._error_result(sized.affected_tickers[0], exc)
 
     def cancel_all_pending(self) -> None:
@@ -54,9 +55,9 @@ class ExecutionAgent:
             ib = self._get_connection()
             for trade in ib.openTrades():
                 ib.cancelOrder(trade.order)
-            logger.warning("[EXECUTION] Cancelled open orders.")
+            logger.warning("[ARES] Cancelled open orders.")
         except Exception as exc:
-            logger.error("[EXECUTION] cancel_all_pending failed: %s", exc)
+            logger.error("[ARES] cancel_all_pending failed: %s", exc)
 
     def _place_bracket(self, ib, symbol: str, sized: SizedSignal) -> TradeResult:
         from ib_insync import Stock
@@ -82,7 +83,7 @@ class ExecutionAgent:
             ib.placeOrder(contract, o)
 
         order_id = str(bracket[0].orderId)
-        logger.info("[EXECUTION] %s %d %s @ %.2f | SL=%.2f TP=%.2f | id=%s",
+        logger.info("[ARES] %s %d %s @ %.2f | SL=%.2f TP=%.2f | id=%s",
                     side, qty, symbol, mid, stop_price, limit_price, order_id)
         return TradeResult(
             order_id=order_id, symbol=symbol, side=side,
@@ -101,7 +102,7 @@ class ExecutionAgent:
             from ib_insync import IB
             self._ib = IB()
             self._ib.connect(self.host, self.port, clientId=1)
-            logger.info("[EXECUTION] Connected to IB %s:%d", self.host, self.port)
+            logger.info("[ARES] Connected to IB %s:%d", self.host, self.port)
         return self._ib
 
     @staticmethod

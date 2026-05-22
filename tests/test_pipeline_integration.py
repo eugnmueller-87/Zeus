@@ -21,9 +21,9 @@ import uuid
 
 from core.types import RawSignal, SignalCategory, Severity, MarketRegime
 from agents.hades import HadesAgent
-from agents.trend import TrendAgent
-from agents.pattern import PatternAgent
-from agents.execution_mock import MockExecutionAgent
+from agents.artemis import ArtemisAgent as TrendAgent
+from agents.pythia import PythiaAgent as PatternAgent
+from agents.ares_mock import AresMockAgent as MockExecutionAgent
 
 
 def _raw(
@@ -181,7 +181,7 @@ class TestPositionSizeSanity:
             _, result = run(h, t, p, e, _raw("Big tech news"))
         if result:
             # qty × price / account_equity ≤ 5%
-            from agents.execution_mock import _ACCOUNT_EQUITY
+            from agents.ares_mock import _ACCOUNT_EQUITY
             exposure = (result.qty * result.fill_price) / _ACCOUNT_EQUITY
             assert exposure <= 0.051  # tiny tolerance for rounding
 
@@ -190,7 +190,7 @@ class TestPositionSizeSanity:
         with _mock_price(100.0):
             _, result = run(h, t, p, e, _raw("Tech news"))
         if result:
-            from agents.execution_mock import _ACCOUNT_EQUITY
+            from agents.ares_mock import _ACCOUNT_EQUITY
             exposure = (result.qty * result.fill_price) / _ACCOUNT_EQUITY
             assert exposure == pytest.approx(0.02, abs=0.005)
 
