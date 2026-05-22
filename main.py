@@ -1,5 +1,5 @@
 """
-ZEUS — Main Entry Point
+Pantheon OS — Main Entry Point
 
 Two run modes:
   1. n8n webhook server (default) — n8n triggers ZEUS via HTTP POST
