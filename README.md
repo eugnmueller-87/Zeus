@@ -14,6 +14,10 @@
 
 ---
 
+![Pantheon Agent Lineup](screenshots/Screenshot%202026-05-22%20215144.png)
+
+---
+
 ## Architecture
 
 ```
