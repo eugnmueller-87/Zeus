@@ -32,6 +32,7 @@ from core.types import (
 from core.knowledge_base import KnowledgeBase
 from core.circuit_breaker import CircuitBreaker
 from core.watchdog import Watchdog
+from core.redis_bridge import RedisBridge
 
 from agents.icarus import IcarusAgent
 from agents.hades import HadesAgent
@@ -107,6 +108,7 @@ class ZeusOrchestrator:
 
         # LLM client for reasoning step
         self._claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        self.bridge  = RedisBridge()   # SpendLens intelligence feed
 
         self._register_watchdog()
         self.watchdog.start()
@@ -189,6 +191,7 @@ class ZeusOrchestrator:
             return run.kill("hades", trace.kill_reason)
         trace.hades_notes = filtered.notes
         run.filtered_signal = filtered
+        self.bridge.push_supplier_risk(filtered)   # → SpendLens vendor risk
 
         # Stage 2 — Trend macro context
         macro: MacroContext = self.cb.call(
@@ -211,6 +214,7 @@ class ZeusOrchestrator:
             self._write_trace(trace)
             return run.kill("trend", trace.kill_reason)
         run.macro_context = macro
+        self.bridge.push_macro(macro)              # → SpendLens category strategy
 
         # Stage 3 — Pattern sizing
         sized: SizedSignal = self.cb.call(
@@ -401,6 +405,7 @@ Respond in this exact JSON format:
             self.kb.store_decision(trace)
         except Exception as exc:
             logger.warning("[ZEUS] Failed to write trace to KB: %s", exc)
+        self.bridge.push_decision(trace)           # → SpendLens Icarus AI feed
 
     def _emergency_halt(self, reason: str) -> None:
         self.halt(reason=f"drawdown kill — {reason}")

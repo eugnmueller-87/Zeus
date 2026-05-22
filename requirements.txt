@@ -16,6 +16,9 @@ chromadb>=0.4
 # HTTP requests (Hermes API + Telegram alerts)
 requests>=2.31
 
+# Upstash Redis — shared intelligence layer with SpendLens
+upstash-redis>=1.0
+
 # Scheduling (standalone mode fallback)
 apscheduler>=3.10
 
